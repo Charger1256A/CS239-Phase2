@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "policyweave"
+version = "0.2.0"
+description = "Application policy translation, review, enforcement and analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["PyYAML==6.0.3"]
+
+[project.optional-dependencies]
+mcp = ["mcp==1.30.0"]
+test = ["playwright==1.58.0"]
+
+[project.scripts]
+policyweave = "policyweave.__main__:main"
+policy-add = "policyweave.policy_adder.student:main"
+policy-translate = "policyweave.policy_adder.__main__:main"
+policy-backtranslate = "policyweave.back_translation.__main__:main"
+policy-review = "policyweave.workbench.__main__:main"
+policy-enforce = "policyweave.enforcement.__main__:main"
+policy-analyze = "policyweave.analysis.__main__:main"
+policy-run-cases = "policyweave.workbench.cases:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"policyweave.core" = ["*.json"]
+"policyweave.analysis" = ["*.dl"]
+"policyweave.enforcement" = ["*.md"]
+"policyweave.policy_adder" = ["*.md"]
+"policyweave.adapters" = ["Dockerfile", "Dockerfile.batch"]
+"policyweave.workbench" = ["static/*"]
+
+[tool.ruff]
+cache-dir = "~/.cache/policyweave/ruff"

@@ -1,0 +1,1033 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=18mm]{geometry}
+\usepackage[table]{xcolor}
+\usepackage{listings}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\DisableLigatures[-]{encoding = *, family = \ttdefault}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Phase 2: Policy Translation, Inspection, and Runtime Enforcement},pdfauthor={}}
+\graphicspath{{images/}{docs/study/images/}{../study/images/}}
+\captionsetup{font=small,labelfont=bf}
+\definecolor{policygray}{gray}{0.93}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\setlist{itemsep=2pt,topsep=3pt,leftmargin=1.5em}
+\lstset{basicstyle=\ttfamily\footnotesize,columns=fullflexible,
+  keepspaces=true,breaklines=true,showstringspaces=false,
+  backgroundcolor=\color{policygray},frame=none,
+  aboveskip=6pt,belowskip=6pt,xleftmargin=6pt,xrightmargin=6pt}
+\newtcolorbox{originalpolicy}{colback=policygray,colframe=policygray,
+  boxrule=0pt,arc=0pt,left=7pt,right=7pt,top=5pt,bottom=5pt,
+  before skip=6pt,after skip=4pt}
+\newcommand{\todo}[1]{\textcolor{red}{[Thaddy: #1]}}
+\newcommand{\tool}{\textsc{PolicyWeave}}
+\newcommand{\field}[2]{\item \texttt{#1}: #2}
+\newcommand{\pred}[2]{\texttt{#1}: #2\par}
+\newcommand{\added}[1]{\colorbox{policygray}{%
+  \makebox[\dimexpr\linewidth-2\fboxsep\relax][l]{\strut\ttfamily\small #1}}}
+% \screenshot[height]{name}{caption}: includes images/name.png as a numbered figure
+% labeled fig:name, or a placeholder box if the image is missing.
+\newcommand{\screenshot}[3][0.42\textheight]{%
+  \begin{center}
+  \IfFileExists{images/#2.png}{%
+    \includegraphics[width=\linewidth,height=#1,keepaspectratio]{#2.png}}{%
+    \fbox{\parbox[c][30mm][c]{0.9\linewidth}{\centering\small
+      Screenshot placeholder: \texttt{#2.png}}}}
+  \captionof{figure}{#3}\label{fig:#2}
+  \end{center}}
+
+\begin{document}
+\begin{center}
+  {\LARGE\bfseries Phase 2: Policy Translation, Inspection,\\[2pt]
+   and Runtime Enforcement}
+\end{center}
+\vspace{-5pt}
+
+We may update these instructions. Please check the
+\href{https://github.com/thaddywu/CS239-Phase2/blob/main/phase2-instructions.pdf}{\textbf{latest instructions on GitHub}}
+for updates: \url{https://github.com/thaddywu/CS239-Phase2/blob/main/phase2-instructions.pdf}.
+
+All Phase 2 deliverables are due December 3 at 9:59 AM PT, before your scheduled presentation.
+
+%======================================================================
+\section{Project Goal}
+
+In Phase 1, you built a multi-agent app and described its policies in natural
+language. In Phase 2, you will translate those policies into enforceable rules
+with {{\tool}-Translator}, test your app before and after runtime
+enforcement is added, and examine the recorded trajectories with {{\tool}-Inspector}.
+
+{\tool} assumes that the policy violations we aim to prevent occur at
+\emph{tool-call boundaries}: the points where an agent acts on the outside
+world or on other agents, such as an MCP tool call or an A2A message send.
+You do not instrument these boundaries yourself. A script we provide performs
+an \emph{agentic translation} of your app: it reads your code and policies and
+adds the instrumentation needed to log each call as part of a trajectory and
+to intercept each call for policy enforcement at runtime. A call that fails
+its checks is blocked before the tool body runs.
+
+Enforcement is built on symbolic reasoning with Datalog, a logic programming
+language in which a policy is a set of rules that derive conclusions, such as
+whether a request is allowed, from recorded facts. At each boundary, {\tool}
+records the call as facts and evaluates the rules against them and the facts
+recorded earlier in the run; for example, it can check whether the caller may
+execute a transfer, or whether the transfer details came from an untrusted
+message.
+
+{\tool} is a research tool under active development, and we are grateful
+for the opportunity to use it with you. We ask for your patience and
+constructive feedback when something does not work as expected. In return, we
+hope the project offers real educational value: hands-on experience with
+symbolic reasoning on top of multi-agent systems, with aligning implemented
+behavior to policy intent, and with reasoning about agent trajectories. We hope
+these skills enrich your software development experience in the era of
+agentic AI.
+
+%======================================================================
+\section{Intended Benefits for Students}
+
+By completing Phase 2, you will:
+\begin{itemize}
+\item learn three classes of safety properties for multi-agent systems:
+capability and access control, information flow, and ordering and lifecycle
+constraints;
+\item see how natural-language policies can be translated into logic rules,
+and judge where a translation preserves or loses your intent;
+\item use symbolic explanations, the facts and rules behind each decision, to
+understand why an agent's action was allowed or blocked.
+\end{itemize}
+
+%======================================================================
+\section{Approach}
+
+Create a Git branch named \texttt{phase2} in your app's repository and commit
+all deliverables there. Before you begin, follow Appendix~\ref{app:setup} to
+install the tools and set the directories and model connection file.
+Screenshots below use \texttt{LabCluster}, a sample app in which a Professor
+agent manages compute jobs submitted by two student agents, Master and PhD.
+
+\subsection{Policy Translation ({\tool}-Translator)}
+\label{sec:translation}
+
+\paragraph{Prepare.} Prepare a clean clone of your original app, with the
+\texttt{app.md} and \texttt{policy.md} you submitted for Phase 1 committed in
+its repository root.
+You may revise your policy descriptions before translation, for example by
+splitting a long policy into separate points. These revisions and policy IDs
+are optional. Commit any changes before translating.
+
+\paragraph{Translate.} Run the agentic translator:
+\begin{lstlisting}
+policyweave port --input "$ORIGINAL_APP_DIR" --output "$PORTED_APP_DIR" \
+  --connection "$CONNECTION_FILE"
+\end{lstlisting}
+This agentic translation uses your API key and tokens for multiple model calls
+to inspect the app, generate and check the port, and produce back-translations.
+The translator reads your policy and app code and writes the \emph{ported app},
+a version of your app with runtime policy enforcement, to
+\texttt{PORTED\_APP\_DIR}. Section~\ref{sec:port} explains what it adds. It
+also describes the implemented enforcement in English and aligns those
+descriptions with \texttt{policy.md}. These \emph{back-translations} are saved
+in \texttt{PORTED\_APP\_DIR/back-translation/}. You do not need to read the
+generated implementation.
+
+\paragraph{Review.} Open the review panel:
+\begin{lstlisting}
+policyweave view-translation \
+  --back-translation "$PORTED_APP_DIR/back-translation" \
+  --policy "$ORIGINAL_APP_DIR/policy.md"
+\end{lstlisting}
+
+\screenshot{translator-review-panel}{{\tool}-Translator reviewing a state/lifecycle/ordering policy. The category labels and arrows are added annotations.}
+
+The panel (Figure~\ref{fig:translator-review-panel}) has four parts:
+\begin{itemize}
+\item \textbf{Navigation bar} (top): \textbf{Previous} and \textbf{Next} move
+between policy sentences; the drop-down shows the current position (for
+example, 7 of 44) and lets you jump to any sentence.
+\item \textbf{Policy pane} (left): your \texttt{policy.md}, with the sentence
+under review highlighted.
+\item \textbf{Implemented checks} (right): The checks implemented for the
+selected policy statement. \emph{Records} describes what the relevant tool
+calls read or record. Expand \textbf{How this is checked} to see
+\emph{Rules}: the conditions checked and when a call is refused. A statement
+may correspond to several checks.
+\item \textbf{Judgment area} (bottom): a category checklist, a rating question,
+\textbf{Add a note}, and \textbf{Save}.
+\end{itemize}
+
+For each sentence, rate whether the implemented checks match the policy:
+\begin{itemize}
+\item \textbf{Fully matches}
+\item \textbf{Partly matches}: describe what is missing or different.
+\item \textbf{Does not match / not implemented}: describe the difference.
+\item \textbf{Not a policy}
+\end{itemize}
+Then classify the sentence; you may select several categories:
+\begin{itemize}
+\item \textbf{Capability / access control}: who may perform which operations;
+\item \textbf{Information flow}: where information may go and who may access it;
+\item \textbf{State / lifecycle}: operation ordering, required states and state
+changes;
+\item \textbf{Other}: enter your own category; policies in this category are
+not enforced.
+\end{itemize}
+Section~\ref{sec:catalog} defines each category precisely; you do not need to
+write Datalog predicates and rules yourself. Appendix~\ref{app:examples} shows examples of full and partial matches. These ratings and categories are your judgments of how well your policies
+were translated into rules; the tool does not assign them.
+
+Click \textbf{Save} to save each sentence's judgment automatically to
+\texttt{PORTED\_APP\_DIR/review.json}. \textbf{Export} downloads a copy through
+your browser (Figure~\ref{fig:review-json}). Include the saved file in your
+submission as \texttt{ported-app/review.json}.
+
+\screenshot{review-json}{Entry in the downloaded \texttt{review.json} for the
+policy highlighted in Figure~\ref{fig:translator-review-panel}, with its saved
+rating and category. You do not need to read this file; submit it as the
+Section~\ref{sec:translation} deliverable.}
+
+After reviewing, copy \texttt{PORTED\_APP\_DIR}, including \texttt{review.json},
+into \texttt{ported-app/} on your \texttt{phase2} branch.
+
+%----------------------------------------------------------------------
+\subsection{Defining Test Scenarios (Unit Tests)}
+
+Construct \textbf{10 test scenarios} covering normal use, possible policy
+violations and boundary cases. Record each scenario in
+\texttt{test\_cases.json}:
+\begin{itemize}
+\field{id}{A short scenario ID, such as \texttt{S02}.}
+\field{task}{The concrete task, initial state and user request. For a
+conversation, include the user and their permissions, relevant app data and
+configuration, prior messages or actions (or that the conversation is new), and
+the starting user message.}
+\field{expected\_outcome}{The intended final app state and response. Include
+concrete values where relevant, such as job states, node assignments and
+resource limits.}
+\field{involved\_policies}{Policies the scenario is intended to exercise.
+For each, provide the policy ID, a brief explanation of why it applies, and
+\texttt{human-judge}, \texttt{llm-judge}, or \texttt{both} to indicate who
+identified its relevance.}
+\field{run\_command}{The command for rerunning the scenario through your test
+harness, \texttt{run.py}. Section~\ref{sec:harness} describes its command-line
+options and output.}
+\end{itemize}
+
+The \texttt{involved\_policies} entries describe the scenario's intended policy
+coverage; they do not indicate whether those policies are followed or violated
+in actual runs.
+
+\begin{minipage}{\linewidth}
+The following example uses \texttt{LabCluster}'s P1: Master may request CPU
+only, with at most 4 cores, 8 GB and 20 minutes of requested runtime. Requests
+outside the owner's quota must not be admitted or dispatched.
+\begin{lstlisting}
+{
+  "cases": [
+    {
+      "id": "S01",
+      "task": "Start a fresh run. No jobs exist; cpu-1 and gpu-1 are idle. The user tells Master: \"Submit one compute task titled N01-M with node_type GPU, 2 cores, 8 GB and 20 minutes.\"",
+      "expected_outcome": "The GPU request is rejected before admission because Master may request CPU only. No job is created or dispatched; gpu-1 stays idle.",
+      "involved_policies": [
+        ["P1", "Master is asked to submit a GPU job, exercising the CPU-only restriction for Master.", "human-judge"]
+      ],
+      "run_command": "python run.py --case S01 --side original --output_dir runs --sample 1"
+    }
+  ]
+}
+\end{lstlisting}
+\end{minipage}
+
+%----------------------------------------------------------------------
+\subsection{Writing a Test Harness (\texttt{run.py})}
+\label{sec:harness}
+
+\textbf{You must implement the test harness, \texttt{run.py}, yourself}; we do
+not provide one, because it depends on how your app is started and driven. You
+may use Claude Code or Codex to help write it. The harness runs the scenarios in
+\texttt{test\_cases.json} on either version of your app, which makes your tests
+repeatable and lets you compare the original and ported apps on identical inputs.
+
+Your harness must support exactly these command-line arguments:
+\begin{lstlisting}
+python run.py --case S01 --side original --output_dir runs --sample 1
+\end{lstlisting}
+\begin{itemize}
+\item \texttt{--case}: the scenario ID from \texttt{test\_cases.json}; omit it
+ to run all scenarios;
+\item \texttt{--side}: the app version to run. You only need to implement
+ \texttt{original}; the translation step below adds \texttt{ported};
+\item \texttt{--output\_dir}: the directory under which results are saved;
+\item \texttt{--sample}: the number of repetitions per scenario, default 1.
+\end{itemize}
+Use a configurable \texttt{APP\_DIR} variable to locate and start your app.
+For example:
+\begin{lstlisting}
+from pathlib import Path
+APP_DIR = Path("/path/to/original-app")
+\end{lstlisting}
+You do not need a particular function layout or additional files. Keep scenario
+inputs and completion checks independent of which application directory is used.
+
+For each sample, set up the scenario's initial state and data, start the app,
+send the scripted inputs and any declared faults or adversarial messages, and
+wait for completion or a timeout. Check actual final state and responses against
+\texttt{expected\_outcome}. Save the result to
+\texttt{<output\_dir>/<case>/<side>/sample-<n>/result.json}, with exactly one
+Boolean field:
+\begin{lstlisting}
+{"task_complete": true}
+\end{lstlisting}
+Use \texttt{false} when the expected outcome is not met, including when a timeout
+or execution error prevents confirming completion. An agent saying it is done
+does not establish completion. If \texttt{expected\_outcome} specifies that the
+requested task cannot be completed without violating a policy, set
+\texttt{task\_complete} to \texttt{true} only when the app declines the violating
+action and its final state and response match that expected outcome.
+
+\paragraph{Translate the harness.} Once original mode works, run from the
+directory containing \texttt{run.py} and \texttt{test\_cases.json}:
+\begin{lstlisting}
+policyweave translate-harness \
+  --input run.py --output translated_harness.py \
+  --original-app "$ORIGINAL_APP_DIR" --ported-app "$PORTED_APP_DIR" \
+  --connection "$CONNECTION_FILE"
+\end{lstlisting}
+The command uses \texttt{ORIGINAL\_APP\_DIR}, \texttt{PORTED\_APP\_DIR} and
+\texttt{CONNECTION\_FILE} configured in Appendix~\ref{app:setup}. It reads your
+harness, adjacent \texttt{test\_cases.json} if present, and application startup
+source through the shared model connection. It generates a new entry point;
+your original \texttt{run.py} remains unchanged. Use a new output filename when
+translating again. The translated entry point
+selects \texttt{APP\_DIR} for \texttt{--side original} or \texttt{--side ported},
+reuses your test logic, and connects to the ported app's existing recording hooks.
+The translated harness uses the same command-line interface (CLI) as the original
+harness, adding support for \texttt{--side ported}.
+You do not implement recording or need to read the trajectory schema.
+
+The translation also adds cumulative task-completion reporting. After every
+\texttt{python translated\_harness.py ...} invocation, it scans all current
+\texttt{<output\_dir>/<case>/<side>/sample-<n>/result.json} files and prints,
+for example:
+\begin{lstlisting}
+Until now, original app: 85/100 runs completed the task.
+Until now, ported app: 80/100 runs completed the task.
+\end{lstlisting}
+For each side, the numerator counts true results and the denominator counts all
+its current result files, including false results. Each sample counts once;
+earlier results in the same output directory are included.
+This reporting is added by PolicyWeave; your original harness does
+not need to implement it. Use a fresh output directory for a new batch rather
+than overwriting existing runs.
+
+%----------------------------------------------------------------------
+\subsection{Running the Test Harness on the Original App}
+
+Run all scenarios on your \textbf{original app} ten times each, keeping its
+existing protections; you do not need to add new guards:
+\begin{lstlisting}
+python translated_harness.py --side original --output_dir runs --sample 10
+\end{lstlisting}
+With 10 scenarios and 10 samples each, this makes 100 runs. Because agents
+behave nondeterministically, the same scenario may succeed in some samples and
+fail in others. The translated harness automatically prints the current
+completion counts for both app versions. Record each scenario's completion
+count for Section~4.
+%----------------------------------------------------------------------
+\subsection{What Porting Adds (Optional)}
+\label{sec:port}
+The \texttt{policyweave port} command in Section~\ref{sec:translation} already
+added enforcement and trajectory instrumentation. This optional section explains
+the generated implementation and built-in predicates; no additional translation
+step is needed. Continue to Section~\ref{sec:run-ported} to run the ported app.
+
+%----------------------------------------------------------------------
+\subsubsection{Injection and Interception}
+\label{sec:inject}
+
+Enforcement is added through two mechanisms: code injection and call
+interception. Injection inserts small additions into the app's source, such as
+\texttt{@policy} annotations on supported tool functions and fact-recording
+hooks, while the policy itself stays in a separate \texttt{.dl} file. At
+run time, the annotation intercepts every call before the function body
+executes. It records the call as \texttt{Request} and \texttt{Parameter} facts,
+asks the Datalog engine whether \texttt{Allow} holds and no \texttt{Deny} holds
+for that request, and then either lets the body run or blocks the call. When
+the body successfully completes, the fact-recording hooks add its results to the fact
+database, so the engine can evaluate later requests against what has already
+happened. Instrumented message sends record their sender, recipient and message
+in the resulting trajectory, which is what
+{\tool}-Inspector displays (Section~\ref{sec:inspect}).
+
+More specifically, the translation adds four pieces:
+\begin{enumerate}
+\item \textbf{A \texttt{.dl} file} containing application rules and base facts,
+such as who has permission and which state changes are allowed.
+\item \textbf{\texttt{@policy} on tool functions.} Before an annotated function
+runs, {\tool} records \texttt{Request} and \texttt{Parameter}, checks the
+rules, and blocks calls that are not permitted.
+\item \textbf{Fact-recording hooks.} Added statements inside tool functions or
+host-side adapters record application information and results for later checks.
+\item \textbf{Trajectory observation hooks.} Record tool-call arguments and
+results, visible model outputs and message sends. The shared recording library
+links policy evidence to calls and exports the trajectory through the runner
+(Section~\ref{sec:harness}).
+\end{enumerate}
+
+Grey lines show the additions to a message-send function. Here,
+\texttt{transport.send} returns a dictionary with a unique \texttt{id}
+after confirming a successful send:
+
+\begingroup
+\setlength{\tabcolsep}{0pt}
+\begin{tabularx}{\linewidth}{@{}X@{}}
+\added{from policyweave.enforcement import current\_caller} \\
+\added{@policy} \\
+\texttt{\small def send\_message(recipient, body):} \\
+\texttt{\small\hspace*{1.5em}result = transport.send(recipient, body)} \\
+\added{\hspace*{1.5em}policy.put("Event", result["id"], current\_caller(), "send\_message")} \\
+\added{\hspace*{1.5em}policy.put("Field", result["id"], "recipient", recipient)} \\
+\added{\hspace*{1.5em}policy.put("Field", result["id"], "outcome", "sent")} \\
+\texttt{\small\hspace*{1.5em}return result}
+\end{tabularx}
+\endgroup
+
+\texttt{@policy} checks the caller and recipient before sending. The caller
+comes from the agent's session, not from the function's arguments. After a
+successful send, \texttt{Event} records the action and \texttt{Field} records
+its recipient and outcome. Later requests can be checked against these facts.
+
+%----------------------------------------------------------------------
+\subsubsection{Datalog Facts, Predicates and Rules}
+\label{sec:catalog}
+
+A \textbf{fact} is a recorded piece of information. For example,
+\texttt{Parameter("q1", "recipient", "Bob")} records that request \texttt{q1}
+has a parameter named \texttt{recipient} whose value is \texttt{Bob}. In the
+general form \texttt{Parameter(Q, Name, Value)}, \texttt{Q} identifies the
+request, \texttt{Name} names a parameter, and \texttt{Value} gives its value.
+{\tool} keeps all facts in a single database of Datalog facts: facts from the
+\texttt{.dl} file, facts recorded for each call, and facts the engine derives
+using rules.
+
+A \textbf{predicate} names a kind of fact, such as \texttt{Parameter}. A
+\textbf{rule} tells us what follows from facts we already have. Read
+\texttt{:-} as ``if'' and commas on its right as ``and'': the conclusion on the
+left holds when all conditions on the right hold. Letters such as \texttt{P}
+and \texttt{R} stand for values; the same letter within a rule refers to the
+same value, and \texttt{\_} matches any value.
+
+{\tool} provides built-in predicates for three categories of safety policies:
+capability and access control (Section~\ref{sec:cat-ac}), information flow
+control (Section~\ref{sec:cat-ifc}), and ordering and lifecycle constraints
+with stateful effects (Section~\ref{sec:cat-lc}). These predicates are already
+defined; the translator writes application rules using these built-in
+predicates without introducing new EDB or IDB predicate names. It implements
+supported requirements and supported portions of partial requirements, and
+reports unsupported conditions and unresolved ambiguities.
+
+%----------------------------------------------------------------------
+\subsubsection{Runtime Control for Actions}
+\label{sec:gate}
+
+Every instrumented action, such as a tool call or a message send, passes
+through a gate that decides whether it may run; because the check happens at
+the moment of action, it applies no matter how the agent was prompted or what
+content it has seen.
+
+\pred{Request(Q, Principal, EventKind)}{Request \texttt{Q} is made by
+\texttt{Principal} to perform \texttt{EventKind}.}
+\pred{Parameter(Q, Name, Value)}{Request \texttt{Q} has this parameter and value.}
+\pred{Allow(Q)}{The rules permit request \texttt{Q}.}
+\pred{Deny(Q, Reason)}{The rules reject request \texttt{Q} for this reason.}
+\begin{center}
+\begin{tabular}{lll}
+\textbf{Allow(Q)} & \textbf{Any Deny(Q, Reason)} & \textbf{Tool body} \\
+\hline
+Absent & Absent & Blocked \\
+Present & Absent & Allowed to run \\
+Absent & Present & Blocked \\
+Present & Present & Blocked
+\end{tabular}
+\end{center}
+A request needs \texttt{Allow}; any \texttt{Deny} blocks it.
+
+\paragraph{Shared application observations.}
+The three categories below also use two shared predicates:
+
+\pred{Field(Object, Name, Value)}{The field \texttt{Name} of
+\texttt{Object} has value \texttt{Value}.}
+\pred{Event(Id, Principal, Kind)}{An event of kind \texttt{Kind} has
+occurred, with \texttt{Principal} as its actor and \texttt{Id} as its identifier.}
+
+\texttt{Field} describes resource attributes and event details, such as an
+owner, version or outcome. \texttt{Request} describes an action being checked;
+\texttt{Event} describes an occurrence that has already happened. Its outcome
+can be recorded with \texttt{Field} to distinguish success from failure.
+
+%----------------------------------------------------------------------
+\subsubsection{Category 1: Capability and Access Control}
+\label{sec:cat-ac}
+Access control dates back to early operating-system protection. The
+group-based rules below follow later work on role-based access control and
+Datalog authorization languages such as Binder (2002); here they decide which
+agent may invoke which tool on which resource.
+
+\pred{Capability(Principal, Scope, EventKind)}{This principal or group has
+an explicit grant to perform this operation on the specified resource or scope.}
+\pred{PrincipalGroup(Principal, Group)}{This principal directly belongs to
+this role or user group. A group may itself belong to another group.}
+\pred{ResourceGroup(Parent, Child)}{\texttt{Parent} contains \texttt{Child};
+permissions on the parent apply to the child.}
+\pred{InGroup(Principal, Group)}{This principal belongs to this group,
+directly or through nested groups.}
+\pred{Can(Principal, Resource, EventKind)}{This principal has the permission,
+directly or through a group.}
+
+\texttt{Capability} has three arguments to identify \emph{who},
+\emph{on which scope}, and \emph{which operation}. An application with
+only tool-level permissions can use a fixed application scope.
+The framework supplies these inference rules:
+
+\begin{lstlisting}
+InGroup(P, G) :- PrincipalGroup(P, G).
+InGroup(P, G) :- PrincipalGroup(P, Mid), InGroup(Mid, G).
+Can(P, R, E) :- Capability(P, R, E).
+Can(P, R, E) :- InGroup(P, G), Can(G, R, E).
+Can(P, Child, E) :- ResourceGroup(Parent, Child), Can(P, Parent, E).
+\end{lstlisting}
+Read each rule as an if-then sentence:
+\begin{enumerate}
+\item Direct membership establishes \texttt{InGroup}.
+\item Membership follows nested groups.
+\item An explicit capability establishes permission on its scope.
+\item A principal inherits the permissions of its groups.
+\item Permission on a parent scope applies to its children.
+\end{enumerate}
+Rules 2, 4 and 5 are \emph{recursive}, so membership and permissions pass
+through nested groups. The engine reapplies the
+rules until no new facts appear, which always terminates. The app's
+\texttt{Allow} rules use \texttt{Can} to check the caller's permission.
+Membership alone does not grant permission; execution still requires
+\texttt{Allow} and no \texttt{Deny}.
+
+%----------------------------------------------------------------------
+\subsubsection{Category 2: Information Flow Control}
+\label{sec:cat-ifc}
+
+Information flow control dates back to Denning's lattice model (1976) and
+later taint tracking. For agents, it tracks whether untrusted content, such
+as an external message, influenced a later action.
+
+\pred{Source(Principal, Data)}{This data came directly from this principal.}
+\pred{DependsOn(Output, Input)}{This output was produced using this input.}
+\pred{Provenance(Data, Principal)}{This data came from this principal,
+directly or through other data.}
+
+\begin{lstlisting}
+Provenance(D, P) :- Source(P, D).
+Provenance(Out, P) :- DependsOn(Out, In), Provenance(In, P).
+\end{lstlisting}
+Read each rule as an if-then sentence:
+\begin{enumerate}
+\item If \texttt{D} came directly from \texttt{P}, its provenance includes \texttt{P}.
+\item If \texttt{Out} was produced from \texttt{In}, it inherits every origin of \texttt{In}.
+\end{enumerate}
+Rule 2 is recursive, so origins carry forward through any chain of copying,
+combining or rewriting. The app records \texttt{Source} and \texttt{DependsOn};
+the engine derives the rest.
+
+\begin{originalpolicy}
+\textbf{Example 1. Policy:} Only Payments may execute transfers. Payment details from
+external messages require additional verification.
+\end{originalpolicy}
+The transfer rule checks the caller's \texttt{Can} permission and uses
+\texttt{Provenance} to require verification for external-message details.
+As long as the app records \texttt{DependsOn} for derived data, rewriting
+those details keeps their origin and cannot bypass the check.
+
+%----------------------------------------------------------------------
+\subsubsection{Category 3: Ordering and Lifecycle Constraints with Stateful Effects}
+\label{sec:cat-lc}
+
+Ordering constraints build on state machines and typestate (Strom and Yemini,
+1986). For agents, they ensure that steps happen in the required order, such
+as approval before publication, even when different agents perform them.
+
+\pred{ResourceType(Resource, Type)}{What kind of resource this is.}
+\pred{ResourceState(Resource, State)}{What state the resource is in now.}
+\pred{InitialState(Type, State)}{The starting state for a new resource of this type.}
+\pred{AllowedTransition(Type, EventKind, From, To)}{This operation may move
+this type of resource from one state to another.}
+\pred{ReachableState(Type, From, To)}{One or more allowed steps connect these states.}
+\pred{CanTransition(Resource, EventKind, From, To)}{This resource can take
+this step from its current state; other policy conditions may still apply.}
+
+\begin{lstlisting}
+ReachableState(T, From, To) :- AllowedTransition(T, _, From, To).
+ReachableState(T, From, To) :- ReachableState(T, From, Mid),
+                             AllowedTransition(T, _, Mid, To).
+CanTransition(R, E, From, To) :- ResourceType(R, T),
+    ResourceState(R, From), AllowedTransition(T, E, From, To).
+\end{lstlisting}
+Read each rule as an if-then sentence:
+\begin{enumerate}
+\item If one allowed step leads from \texttt{From} to \texttt{To}, \texttt{To} is reachable.
+\item If \texttt{Mid} is reachable and one step leads from \texttt{Mid} to \texttt{To}, so is \texttt{To}.
+\item If \texttt{R} is now in \texttt{From} and its type allows \texttt{E} from
+\texttt{From} to \texttt{To}, \texttt{R} can take that step.
+\end{enumerate}
+Rule 2 is recursive, so \texttt{ReachableState} connects states through any
+number of steps. The app's \texttt{Allow} rules use \texttt{CanTransition} to
+check the next step. This is the stateful effect: a new resource starts in
+its \texttt{InitialState}, and when an operation succeeds, {\tool}
+\emph{replaces} its \texttt{ResourceState} with the new state rather than
+adding a second one.
+
+\begin{originalpolicy}
+\textbf{Example 2. Policy:} A document may be published only after approval.
+\end{originalpolicy}
+Configure \texttt{DRAFT} $\rightarrow$ \texttt{APPROVED} $\rightarrow$
+\texttt{PUBLISHED}. A publish rule requires the
+\texttt{APPROVED} $\rightarrow$ \texttt{PUBLISHED} transition, so publishing a
+draft is blocked, and a successful publication moves the document to
+\texttt{PUBLISHED}.
+%----------------------------------------------------------------------
+\subsection{Running the Test Harness on the Ported App}
+\label{sec:run-ported}
+
+Run all scenarios on the \textbf{ported app} ten times each, with the same
+initial state and inputs as for the original app:
+\begin{lstlisting}
+python translated_harness.py --side ported --output_dir runs --sample 10
+\end{lstlisting}
+Each run saves its single-field \texttt{result.json} under
+\texttt{runs/<case>/ported/sample-<n>/}. Check that PolicyWeave also generated
+\texttt{trajectory.json} in that directory and that Inspector can open it
+(Section~\ref{sec:inspect}); the equivalent \texttt{trajectory.jsonl} is also
+exported. If the file is missing or PolicyWeave-Inspector cannot read it, contact
+\href{mailto:thaddywu@gmail.com}{\nolinkurl{thaddywu@gmail.com}}. You do not
+construct or repair trajectory records yourself. An example and schema are in Appendix~\ref{app:trajectory}.
+The harness automatically reports the
+cumulative task-completion counts for both versions, for example:
+\begin{lstlisting}
+Until now, original app: 85/100 runs completed the task.
+Until now, ported app: 80/100 runs completed the task.
+\end{lstlisting}
+Record how many samples of each scenario completed the task. Then use the
+trajectories to find which violations were blocked and whether any legitimate
+action was incorrectly blocked; you will report both in Section~4.
+
+%----------------------------------------------------------------------
+\subsection{Inspecting Trajectories and Asking Questions ({\tool}-Inspector)}
+\label{sec:inspect}
+
+By default, {\tool}-Inspector loads and displays the JSONL trajectory specified
+by \texttt{--traj}. Start it with the same private YAML connection file used
+for translation so QA is available during review:
+\begin{lstlisting}
+policyweave inspect \
+  --traj runs/S01/ported/sample-1/trajectory.jsonl \
+  --connection "$CONNECTION_FILE"
+\end{lstlisting}
+Use \textbf{Open} (top right) to open another JSONL trajectory. The inspector
+has three views, from left to right: agents, timeline and inspector
+(Figure~\ref{fig:inspector-overview}).
+
+\screenshot[0.55\textheight]{inspector-overview}{{\tool}-Inspector displaying
+a recorded LabCluster test run. Red boxes mark the three agents and a message
+from Master to Professor. Evidence shows the database for Master's selected,
+blocked \texttt{read\_job} call.}
+
+\paragraph{Agents view (left).} Lists the agents in the run, such as Master,
+PhD and Professor in LabCluster. Select \textbf{All agents} to see every
+agent's events, or one agent to see events it sent or received.
+
+\paragraph{Timeline view (center).} Shows the agent trajectory: the selected
+agents' events in order. The activity filter narrows the event types shown,
+the search box finds events by text, and the slider at the top moves through
+the run by event number. Each event card shows its agent and event number, plus:
+\begin{itemize}
+\item a \textbf{Tool} label with the tool name and arguments, for a tool call;
+\item an \textbf{LLM} label for a model output, such as the model choosing the
+next tool;
+\item a \textbf{Message send} tag, recipient and body for a recorded send;
+\item a status badge on gated calls: \textbf{Checked} (green) when the call
+passed the gate and ran, or \textbf{Blocked} (red) when the gate stopped it.
+\end{itemize}
+
+\paragraph{Inspector view (right).} Shows the details of the selected event,
+identified by its event number (for example, \texttt{\#270}), in three tabs:
+Details, QA and Evidence.
+
+\screenshot[0.55\textheight]{inspector-details}{Details for Master's blocked
+\texttt{read\_job} call on PhD's \texttt{JOB-002}, with Result expanded.}
+
+\textbf{Details} (Figure~\ref{fig:inspector-details}) summarizes the call: its
+agent and tool, status, recorded refusal reason, arguments, and an expandable
+\textbf{Result} containing the response returned to the caller. The gate blocked
+Master's request to read \texttt{JOB-002}, with refusal reason \texttt{UNAVAILABLE}.
+
+\screenshot[0.60\textheight]{inspector-qa}{QA explaining the same blocked
+\texttt{read\_job} call, with the query result and Translation and query expanded.}
+
+\textbf{QA} (Figure~\ref{fig:inspector-qa}) answers questions about the
+selected call. Choose one of the four predefined questions and click
+\textbf{Analysis}. {\tool} queries the recorded facts and rules and explains
+the results. The four questions are:
+\begin{itemize}
+\item \textbf{Why blocked?} (or \textbf{Why allowed?}): explains the decision
+using refusal reasons, applicable rule conditions and additional fact queries.
+In Figure~\ref{fig:inspector-qa}, these queries establish Master's student role
+and that \texttt{JOB-002} belongs to PhD, explaining why neither the professor
+nor student-owner read permission applies and \texttt{UNAVAILABLE} is derived.
+\item \textbf{Access control}: identifies applicable authorization and state
+conditions and compares them with the recorded roles, ownership and state.
+\item \textbf{Information flow}: examines the requested disclosure and
+the data's sources, dependencies and recipients.
+\item \textbf{Effects}: shows whether the tool call ran, its response,
+and facts added or removed by the call.
+\end{itemize}
+Answers cite the selected event and display query results. Expand
+\textbf{Translation and query} to see the logic queries that were run.
+
+\textbf{Evidence} contains \textbf{Database}, showing the selected call's
+recorded facts and request parameters. Use \textbf{Before} and \textbf{After}
+to compare facts before and after the call.
+
+Inspect at least one blocked and one checked call from your runs, and use them
+when answering the questions in Section~\ref{sec:qual}.
+%======================================================================
+\section{Quantitative Results Submission}
+
+On your \texttt{phase2} branch, submit:
+\begin{itemize}
+\item \texttt{policy.md}, only if you updated it since Phase 1, for example to
+add policy IDs or split combined requirements;
+\item \texttt{ported-app/}: the generated app, including
+\texttt{back-translation/} and your completed \texttt{review.json};
+\item \texttt{test\_cases.json}: the ground truth for your test scenarios
+(Section~3.2);
+\item \texttt{run.py} and \texttt{translated\_harness.py}: your original harness
+and the generated entry point (Section~\ref{sec:harness}), plus any test inputs
+and initial data they need;
+\item \texttt{result.json} for every original and ported run under
+\texttt{runs/<case>/<side>/sample-<n>/}, containing only the Boolean field
+\texttt{task\_complete}, plus all ported-app trajectories;
+\item a \texttt{README.md} with the original app's commit, the environment, and
+how to run the harness; document any manual inputs or actions;
+\item a \texttt{report.md} containing the summary tables below, the success
+counts automatically printed by the harness for both app versions, and your
+answers to Section~\ref{sec:qual}.
+\end{itemize}
+
+\paragraph{Translation summary.} Count your \texttt{review.json} ratings by
+category. A sentence with several categories counts once in each.
+\begin{center}
+\small
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Category} & \textbf{Fully matches} & \textbf{Partly matches}
+& \textbf{Does not match} \\
+\hline
+Capability / access control & & & \\
+Information flow & & & \\
+State / lifecycle & & & \\
+Other & & & \\
+\hline
+\end{tabular}
+\end{center}
+Also report how many sentences you rated \textbf{Not a policy}.
+
+\paragraph{Enforcement summary.} For each scenario, report how many of its
+samples completed the task on the original and ported apps, and what you observed in the
+ported app's trajectories:
+\begin{center}
+\small
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+& \multicolumn{2}{c|}{\textbf{Task Completed}}
+& \textbf{Violations} & \textbf{Legitimate actions} \\
+\textbf{Scenario} & \textbf{Original} & \textbf{Ported}
+& \textbf{blocked} & \textbf{blocked} \\
+\hline
+S01 & /10 & /10 & & \\
+S02 & /10 & /10 & & \\
+\ldots & & & & \\
+\hline
+\textbf{Total} & /100 & /100 & & \\
+\hline
+\end{tabular}
+\end{center}
+For each blocked violation and each incorrectly blocked legitimate action,
+cite the sample and event ID from the ported trajectory, for example
+\texttt{S02, sample-3, E0105}.
+
+%======================================================================
+\section{Qualitative Results}
+\label{sec:qual}
+
+These questions serve two purposes. For you, they are a structured reflection
+on what you learned about capability, information flow and lifecycle
+properties, translating natural-language policies into logic, and reasoning
+about agent trajectories. For us, your answers help us understand how well
+{\tool} works in practice and where it falls short.
+
+Answer each question in \texttt{report.md}. Each asks for a rating or
+selection and a short written response.
+
+\paragraph{Every response must be grounded in a specific example.} Cite the
+policy ID, scenario ID, sample and event ID that support your answer, for
+example \texttt{P1.3} or \texttt{S02, sample-3, E0105}. Generic statements,
+such as ``the translation was mostly accurate'' or ``the inspector was
+helpful,'' do not count as answers. Describe limitations as well as benefits;
+you are graded on the specificity of your evidence, not on whether your
+assessment of {\tool} is positive, and critical answers are as valuable to us
+as positive ones.
+
+\paragraph{Research consent.} At the top of \texttt{report.md}, include the
+following line and check the box (\texttt{[x]}) if you agree, or leave it
+unchecked (\texttt{[ ]}) if you do not:
+\begin{lstlisting}
+- [ ] I consent to my responses being used for research purposes.
+\end{lstlisting}
+Your choice does not affect your grade, and you must answer the questions
+either way.
+
+\begin{enumerate}
+\item \textbf{Translation fidelity.} How well did the generated rules capture
+the intent of your natural-language policies?\\
+\emph{Rating:} 1 (not at all) to 5 (completely).\\
+\emph{Response:} Give one policy, by ID, whose translation matched your intent
+and one whose translation fell short or surprised you, citing your rating of
+each in \texttt{review.json}. What made the difference?
+
+\item \textbf{Runtime enforcement.} Compared with your original app, how did
+runtime enforcement change your app's behavior?\\
+\emph{Select all that apply:} blocked violations the original app allowed; blocked
+legitimate actions; no observable difference; other.\\
+\emph{Response:} Describe one test scenario that illustrates your answer,
+citing its scenario ID, sample counts for both apps, and the event ID of a
+relevant checked or blocked call. What did it teach you about capability,
+information flow, or lifecycle properties?
+
+\item \textbf{Inspection.} How much did inspecting checked and blocked calls
+help you understand your agents' behavior?\\
+\emph{Rating:} 1 (not at all) to 5 (a great deal).\\
+\emph{Response:} Describe one decision you inspected, citing its scenario,
+sample and event ID and the question you asked in the QA tab. What did the
+answer show that the raw trajectory did not, and what was missing?
+\end{enumerate}
+
+%======================================================================
+\appendix
+\clearpage
+\section{Environment and Model Setup}
+\label{app:setup}
+
+From the {\tool} repository root:
+\begin{lstlisting}
+./install.sh
+source .venv/bin/activate
+\end{lstlisting}
+Automatic installation requires Linux x86\_64, Python 3.10+ and Docker, with Docker running
+and accessible to your user. The installer prepares the remaining tools and
+execution images. If installation fails because of operating-system versions
+or \texttt{sudo} permissions, follow Appendix~\ref{app:manual-setup} to
+install the required tools. Configure the API key separately below.
+
+\subsection*{Application paths and model connection}
+The ported-app directory must be empty or nonexistent and separate from the
+original app:
+\begin{lstlisting}
+export ORIGINAL_APP_DIR="/path/to/original-app"
+export PORTED_APP_DIR="/path/to/ported-app"
+export CONNECTION_FILE="$HOME/.config/policyweave/connection.yaml"
+mkdir -p "$(dirname "$CONNECTION_FILE")"
+
+cat > "$CONNECTION_FILE" <<'YAML'
+provider: auto
+openai:
+  apiKey: ""
+  modelId: gpt-6.1-sol
+  reasoningEffort: medium
+anthropic:
+  apiKey: ""
+  modelId: claude-opus-5-5
+  reasoningEffort: medium
+YAML
+\end{lstlisting}
+
+Fill one \texttt{apiKey}. Set \texttt{provider} to \texttt{auto},
+\texttt{openai}, or \texttt{anthropic}; \texttt{auto} prefers OpenAI when both
+keys are filled. Adjust \texttt{reasoningEffort} to select the reasoning level;
+the template uses \texttt{medium}.
+
+\clearpage
+\section{Manual Installation (Optional)}
+\label{app:manual-setup}
+
+The \texttt{./install.sh} command in Appendix~\ref{app:setup} may encounter
+errors due to operating-system versions, permissions, or other environment
+differences. Use this appendix to resolve installation problems. If you still
+cannot complete installation, contact
+\href{mailto:thaddywu@cs.ucla.edu}{\nolinkurl{thaddywu@cs.ucla.edu}}.
+The required libraries and packages are listed step by step below.
+
+\subsubsection*{1. Python, Git and system libraries.}
+\begin{lstlisting}
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv git curl ca-certificates \
+  dpkg util-linux libffi8 libgomp1 libncurses6 libtinfo6 libsqlite3-0 \
+  libstdc++6 libgcc-s1 zlib1g
+\end{lstlisting}
+
+\subsubsection*{2. Docker.} If Docker is not installed:
+\begin{lstlisting}
+sudo apt-get install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+\end{lstlisting}
+Log out and back in, then run \texttt{docker info}.
+
+\subsubsection*{3. Framework.}
+\begin{lstlisting}
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[mcp]'
+\end{lstlisting}
+
+\subsubsection*{4. Souffl\'{e} 2.5.}
+\begin{lstlisting}
+POLICY_ENGINE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/policyweave/souffle"
+python -m policyweave.adapters.install_souffle \
+  --directory "$POLICY_ENGINE_DIR"
+export PATH="$POLICY_ENGINE_DIR/usr/bin:$PATH"
+souffle --version
+\end{lstlisting}
+The \texttt{util-linux} package supplies \texttt{prlimit}. Keep the engine on
+\texttt{PATH} when running the ported app or Inspector queries.
+
+\subsubsection*{5. Coding CLI.} Install the CLI for your selected provider.
+For OpenAI:
+\begin{lstlisting}
+curl -fsSL https://chatgpt.com/codex/install.sh -o /tmp/install-codex.sh
+sh /tmp/install-codex.sh
+export PATH="$HOME/.local/bin:$PATH"
+codex --version
+\end{lstlisting}
+\begin{minipage}{\linewidth}
+For Anthropic:
+\begin{lstlisting}
+curl -fsSL https://claude.ai/install.sh -o /tmp/install-claude.sh
+bash /tmp/install-claude.sh 2.1.252
+export PATH="$HOME/.local/bin:$PATH"
+claude --version
+\end{lstlisting}
+\end{minipage}
+
+\begin{minipage}{\linewidth}
+\subsubsection*{6. Execution images.}
+\begin{lstlisting}
+docker build -f src/policyweave/adapters/Dockerfile \
+  -t policy-portin:local .
+docker build -f src/policyweave/adapters/Dockerfile.batch \
+  -t policy-portin:batch-v1 .
+docker run --rm --network none policy-portin:local
+\end{lstlisting}
+Docker isolates translation and its offline verification. Run scenario
+experiments in your app's environment, using its Phase 1 dependency setup.
+\end{minipage}
+
+\clearpage
+\section{Trajectory Example and Schema}
+\label{app:trajectory}
+
+Example \texttt{trajectory.json}:
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+{
+  "format": "policyscope-timeline",
+  "version": 1,
+  "title": "S02",
+  "roles": [
+    {"id": "user", "name": "User", "kind": "user"},
+    {"id": "worker", "name": "Worker", "kind": "agent"}
+  ],
+  "events": [
+    {"id": "E1", "sequence": 0, "kind": "message", "actor": "user",
+     "recipients": ["worker"], "content": "Read report R1."},
+    {"id": "E2", "sequence": 1, "kind": "tool_call", "actor": "worker",
+     "tool": "read_report", "callId": "C1", "arguments": {"id": "R1"}},
+    {"id": "E3", "sequence": 2, "kind": "tool_result", "actor": "worker",
+     "callId": "C1", "result": {"text": "Example report"}},
+    {"id": "E4", "sequence": 3, "kind": "llm_output", "actor": "worker",
+     "result": "The report is available."}
+  ]
+}
+\end{lstlisting}
+
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\textbf{Field} & \textbf{Definition} \\
+\hline
+\texttt{format}, \texttt{version} & \texttt{policyscope-timeline}, \texttt{1}. \\
+\texttt{title} & Optional run label. \\
+\texttt{roles} & Participants with unique \texttt{id}, display \texttt{name} and
+\texttt{kind}: agent, user, tool, environment, observer or runtime. \\
+\texttt{events} & Ordered events with unique \texttt{id}, \texttt{sequence}
+starting at zero, \texttt{kind} and a declared participant as \texttt{actor}. \\
+\texttt{message} & \texttt{content} and \texttt{recipients} (participant IDs). \\
+\texttt{tool\_call} & \texttt{tool}, unique \texttt{callId} and JSON \texttt{arguments}. \\
+\texttt{tool\_result} & Matching earlier \texttt{callId} and JSON \texttt{result}. \\
+\texttt{llm\_output} & Visible model response in \texttt{result}. \\
+\texttt{state} & Observed state or policy evidence in \texttt{data}. \\
+\texttt{timestamp} & Optional ISO timestamp with seconds and timezone. \\
+\end{tabularx}
+
+The equivalent \texttt{trajectory.jsonl} puts the header (without \texttt{events})
+on its first line, followed by one event per line.
+
+\clearpage
+\section{Review Examples}
+\label{app:examples}
+
+Both examples use \texttt{LabCluster}'s policies.
+
+\begin{originalpolicy}
+\textbf{Example 1 (Fully matches).} Master may request CPU only, with at most
+4 cores, 8 GB and 20 minutes of requested runtime.
+\end{originalpolicy}
+The tool records the requested node type, cores, memory and runtime. Added rules
+block Master's non-CPU or over-limit requests before creating a job. In a native
+boundary test, a CPU request with 4 cores, 8 GB and 20 minutes succeeded; a
+5-core request was blocked without creating a job. Select \textbf{Fully matches}
+and \textbf{Capability / access control}.
+
+\screenshot[0.68\textheight]{phase2-review-full}{Review of a policy that fully matches its
+implemented checks.}
+
+\clearpage
+\begin{originalpolicy}
+\textbf{Example 2 (Partly matches).} Neither student may receive the other's
+private job specifications, inputs, results, approvals or execution receipts
+through tools, model contexts or messages.
+\end{originalpolicy}
+The added \texttt{read\_job} rules compare the saved job owner with the calling
+student and refuse another student's job. They do not inspect message bodies
+or isolate model contexts. A native test delivered PhD's synthetic private input
+to Master through a message and exposed it in Master's context. Select
+\textbf{Partly matches} and \textbf{Information flow}, and describe this gap in
+the note.
+
+\screenshot[0.68\textheight]{phase2-review-partial}{Review of a policy that partly matches its
+implemented checks, with a note describing the gap.}
+
+\end{document}
