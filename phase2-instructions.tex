@@ -14,7 +14,9 @@
 \DisableLigatures[-]{encoding = *, family = \ttdefault}
 \usepackage[hidelinks]{hyperref}
 \hypersetup{pdftitle={Phase 2: Policy Translation, Inspection, and Runtime Enforcement},pdfauthor={}}
-\graphicspath{{images/}{docs/study/images/}{../study/images/}}
+% Keep PDF identifiers independent of the temporary export directory.
+\pdftrailerid{}
+\graphicspath{{images/}}
 \captionsetup{font=small,labelfont=bf}
 \definecolor{policygray}{gray}{0.93}
 \setlength{\parindent}{0pt}
@@ -28,7 +30,6 @@
 \newtcolorbox{originalpolicy}{colback=policygray,colframe=policygray,
   boxrule=0pt,arc=0pt,left=7pt,right=7pt,top=5pt,bottom=5pt,
   before skip=6pt,after skip=4pt}
-\newcommand{\todo}[1]{\textcolor{red}{[Thaddy: #1]}}
 \newcommand{\tool}{\textsc{PolicyWeave}}
 \newcommand{\field}[2]{\item \texttt{#1}: #2}
 \newcommand{\pred}[2]{\texttt{#1}: #2\par}
@@ -843,7 +844,7 @@ Automatic installation requires Linux x86\_64, Python 3.10+ and Docker, with Doc
 and accessible to your user. The installer prepares the remaining tools and
 execution images. If installation fails because of operating-system versions
 or \texttt{sudo} permissions, follow Appendix~\ref{app:manual-setup} to
-install the required tools. Configure the API key separately below.
+install the required tools. Configure the model connection separately below.
 
 \subsection*{Application paths and model connection}
 The ported-app directory must be empty or nonexistent and separate from the
@@ -864,13 +865,46 @@ anthropic:
   apiKey: ""
   modelId: claude-opus-5-5
   reasoningEffort: medium
+codex-compatible-local-endpoint:
+  baseUrl: ""
+  modelId: ""
+  apiKey: ""
+  reasoningEffort: null
 YAML
 \end{lstlisting}
 
-Fill one \texttt{apiKey}. Set \texttt{provider} to \texttt{auto},
+For hosted models, fill one \texttt{apiKey}. Set \texttt{provider} to \texttt{auto},
 \texttt{openai}, or \texttt{anthropic}; \texttt{auto} prefers OpenAI when both
 keys are filled. Adjust \texttt{reasoningEffort} to select the reasoning level;
-the template uses \texttt{medium}.
+the hosted sections here use \texttt{medium}.
+
+\subsubsection*{Local or self-hosted models.}
+Select \texttt{provider:} \nolinkurl{codex-compatible-local-endpoint}. Set that
+section's \texttt{baseUrl} (e.g.\ \nolinkurl{http://127.0.0.1:8000/v1}) and
+\texttt{modelId} to your service, using the same model for both interfaces below.
+Coding uses the Codex CLI; \texttt{auto} only selects hosted sections.
+Leave \texttt{apiKey} empty without
+authentication, or fill it for Bearer authentication.
+
+The same API prefix must support:
+\begin{itemize}
+  \item \texttt{POST /chat/completions}: system/user messages,
+    \texttt{max\_completion\_tokens}, non-streaming text responses and
+    \texttt{response\_format} with \texttt{type: json\_schema} for planning.
+  \item \texttt{POST /responses}: Codex-compatible requests, SSE streaming,
+    tool definitions, tool calls and tool-result input across multiple turns.
+\end{itemize}
+Chat Completions alone cannot run the complete porting workflow. A route named
+\texttt{/responses} is insufficient unless it implements the installed Codex
+CLI's interaction format.
+Set \texttt{baseUrl} to the API prefix, including \texttt{/v1} when needed,
+not either endpoint path. The service must be reachable from the PolicyWeave
+host. Only loopback HTTP or HTTPS is allowed; redirects are rejected.
+
+Prepare Codex with \texttt{./install.sh --provider}
+\nolinkurl{codex-compatible-local-endpoint}. Coding also requires Docker.
+Inspector QA, rules-only translation and harness translation need only Chat
+Completions. Configure the application's runtime model separately.
 
 \clearpage
 \section{Manual Installation (Optional)}
@@ -918,7 +952,7 @@ The \texttt{util-linux} package supplies \texttt{prlimit}. Keep the engine on
 \texttt{PATH} when running the ported app or Inspector queries.
 
 \subsubsection*{5. Coding CLI.} Install the CLI for your selected provider.
-For OpenAI:
+For OpenAI or \texttt{codex-compatible-local-endpoint}:
 \begin{lstlisting}
 curl -fsSL https://chatgpt.com/codex/install.sh -o /tmp/install-codex.sh
 sh /tmp/install-codex.sh

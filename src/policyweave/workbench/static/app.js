@@ -338,6 +338,18 @@ function render() {
   main.setAttribute("aria-busy", "false");
   renderReview();
 }
+document.querySelector('header a[download]').onclick = (event) => {
+  event.preventDefault();
+  const source = event.currentTarget;
+  move(async () => {
+    const value = await request(source.getAttribute('href'));
+    const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type: 'application/json'}));
+    const link = document.createElement('a');
+    link.href = url; link.download = source.download;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+};
 $("#close-editor").onclick = () => $("#editor").close();
 $("#document-file").onchange = async (e) => {
   const file = e.target.files[0];

@@ -11,10 +11,13 @@ from urllib.parse import urlsplit
 OPENAI_DEFAULTS = dict(
     baseUrl="https://api.openai.com/v1", modelId="gpt-6.1-sol", reasoningEffort="medium"
 )
+LOCAL_PROVIDER = "codex-compatible-local-endpoint"
+AUTO_PROVIDERS = ("openai", "anthropic")
 PROVIDERS = {
     "openai": dict(OPENAI_DEFAULTS, protocol="chat-completions"),
-    "anthropic": dict(baseUrl="https://api.anthropic.com/v1", modelId="claude-sonnet-4-6",
-                      protocol="messages"),
+    "anthropic": dict(baseUrl="https://api.anthropic.com/v1", modelId="claude-opus-5-5",
+                      reasoningEffort="medium", protocol="messages"),
+    LOCAL_PROVIDER: dict(protocol="chat-completions"),
 }
 CONNECTION_FIELDS = {
     "protocol", "baseUrl", "modelId", "apiKey", "reasoningEffort", "maxTokens",
@@ -80,7 +83,7 @@ def load_connection(path):
     if not isinstance(value, dict):
         raise ValueError("Connection file must contain a mapping.")
     if set(value) - {*PROVIDERS, "provider"}:
-        raise ValueError("Use only provider, openai and anthropic at the top level.")
+        raise ValueError("Use only provider and supported connection sections: " + ", ".join(PROVIDERS) + ".")
     sections = {}
     for name in PROVIDERS:
         section = value.get(name)
@@ -96,11 +99,11 @@ def load_connection(path):
         sections[name] = section
     selected = value.get("provider", "auto")
     if not isinstance(selected, str) or selected not in {*PROVIDERS, "auto"}:
-        raise ValueError("provider must be auto, openai or anthropic.")
+        raise ValueError("provider must be auto or one of: " + ", ".join(PROVIDERS) + ".")
     if selected == "auto":
-        selected = next((name for name in PROVIDERS if sections[name].get("apiKey", "").strip()), None)
+        selected = next((name for name in AUTO_PROVIDERS if sections[name].get("apiKey", "").strip()), None)
         if selected is None:
-            raise ValueError("Fill apiKey in the openai or anthropic section.")
+            raise ValueError("Fill apiKey in the openai or anthropic section, or explicitly select " + LOCAL_PROVIDER + ".")
     section = sections[selected]
     if not section.get("apiKey", "").strip() and not section.get("baseUrl"):
         raise ValueError("Selected provider requires apiKey, or an explicit endpoint for a keyless connection.")

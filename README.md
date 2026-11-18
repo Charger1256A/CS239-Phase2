@@ -46,4 +46,6 @@ Review **Save** writes PORTED_APP_DIR/review.json automatically.
 - [Repository structure](docs/repository-structure.md)
 
 The editable course source is phase2-instructions.tex, with figures in images/.
+Releases are generated from the [development repository](https://github.com/thaddywu/AgentProperties);
+`release.json` records the framework and course-source revisions.
 The framework is Apache-2.0 licensed; see [LICENSE](LICENSE).

@@ -12,8 +12,9 @@ user. Automatic setup currently targets Linux x86_64 with Ubuntu/Debian package
 tools. It requests `sudo` only for missing system packages, prepares the native
 engine and both coding CLIs, builds the execution images and runs engine checks.
 Existing compatible tools are reused; repeated builds use Docker's layer cache.
-It never reads or writes model credentials. `--provider openai`, `anthropic` or
-`none` limits optional coding-CLI preparation; the default is `both`.
+It never reads or writes model credentials. `--provider openai`, `anthropic`,
+`codex-compatible-local-endpoint` or `none` limits optional coding-CLI preparation;
+the local option prepares Codex and the default `both` prepares both CLIs.
 
 ## Optional: manual installation
 
@@ -153,6 +154,10 @@ CLI is needed for app porting and repository reading, while inspection and
 data-only model calls do not need one. The [connection guide](porting.md) lists
 defaults, supported CLI boundaries and the optional local-fixture Docker check.
 No provider-specific environment setup is required.
+For local or self-hosted models, select `provider: codex-compatible-local-endpoint`
+and fill that section's `baseUrl` and `modelId`; `apiKey` may be empty. This option
+requires explicit selection and does not inherit hosted defaults. See
+[local endpoint requirements](porting.md#local-model-endpoints).
 
 Start Inspector with that connection file for trajectory review and QA:
 

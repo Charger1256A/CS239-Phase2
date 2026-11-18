@@ -162,6 +162,20 @@ if [[ $1 == info && ${INSTALL_TEST_DOCKER:-ready} != ready ]]; then exit 1; fi
             self.assertFalse((root / ".venv").exists())
             self.assertTrue(config.is_file())
 
+    def test_local_option_prepares_codex_and_preserves_connection(self):
+        from policyweave.adapters.model_settings import LOCAL_PROVIDER
+
+        self.assertEqual(tools.CODING_PROVIDERS[LOCAL_PROVIDER], ["codex"])
+        with tempfile.TemporaryDirectory() as directory:
+            root, config, env = self.setup_checkout(directory)
+            original = config.read_bytes()
+            result = subprocess.run(["bash", "install.sh", "--provider", LOCAL_PROVIDER],
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("policyweave.adapters.install_tools --provider " + LOCAL_PROVIDER,
+                          (root / "commands.log").read_text())
+            self.assertEqual(config.read_bytes(), original)
+
     def test_invalid_provider_stops_before_any_environment_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root, _, env = self.setup_checkout(directory)

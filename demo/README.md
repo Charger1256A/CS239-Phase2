@@ -29,6 +29,12 @@ policyweave view-translation --back-translation demo/ported_app/back-translation
   --policy demo/orig_app/policies.md
 ```
 
+For a remote server, forward the review port (5190) and Inspector port (5191)
+to local ports and open their `http://localhost:PORT` addresses in your browser.
+The local ports may differ from the server ports. Export downloads to the browser's
+machine after saving the current edits. Analysis runs on the server and reports
+progress while the model processes the recorded evidence.
+
 Both harnesses load case IDs from the adjacent [test_cases.json](test_cases.json).
 The demo contains one scenario with one sample per side; the full assignment
 requires ten scenarios and ten samples each.

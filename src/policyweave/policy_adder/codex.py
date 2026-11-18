@@ -669,7 +669,7 @@ def main():
         "--connection",
         type=Path,
         required=True,
-        help="Private connection YAML with openai and anthropic sections",
+        help="Private model connection YAML",
     )
     parser.add_argument(
         "--stage", choices=("translate", "backtranslate", "all"), default="all"

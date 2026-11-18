@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo 'Usage: ./install.sh [--provider both|openai|anthropic|none]'
+  echo 'Usage: ./install.sh [--provider both|openai|anthropic|codex-compatible-local-endpoint|none]'
   echo 'Prepare the Python environment, native tools and Docker images. No API key is needed.'
 }
 
@@ -17,7 +17,7 @@ while (($#)); do
   esac
 done
 case "$provider" in
-  both|openai|anthropic|none) ;;
+  both|openai|anthropic|codex-compatible-local-endpoint|none) ;;
   *) usage >&2; exit 2 ;;
 esac
 

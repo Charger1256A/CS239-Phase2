@@ -32,7 +32,7 @@ function route(event) {
   return event.tool || event.data?.request?.action || '';
 }
 async function post(operation, value) {
-  const response = await fetch('/api/analysis/' + operation, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Study-Token': token}, body: JSON.stringify(value)});
+  const response = await fetch('/api/analysis/' + operation, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Study-Token': token}, body: JSON.stringify(value), ...(operation==='explain' ? {signal:AbortSignal.timeout(15000)} : {})});
   const data = await response.json();
   if (!response.ok) throw Error(data.error || 'Could not read this trajectory.');
   return data;
@@ -367,7 +367,21 @@ async function analyzeCall() {
   const identity=log.id,eventId=selected,current=++callTicket,output=$('#call-answer');
   output.replaceChildren();$('#call-status').textContent='Analyzing this call…';$('#analyze-call').disabled=true;
   try {
-    const response=await post('explain',{trajectoryId:identity,eventId,templateId:callTemplate});
+    const {jobId}=await post('explain',{trajectoryId:identity,eventId,templateId:callTemplate,background:true});
+    let response;
+    while(current===callTicket && log.id===identity && selected===eventId) {
+      const request=await fetch('/api/analysis/jobs/'+encodeURIComponent(jobId),{signal:AbortSignal.timeout(15000)});
+      const job=await request.json();
+      if(!request.ok)throw Error(job.error || 'Could not read this analysis.');
+      if(current!==callTicket || log.id!==identity || selected!==eventId)return;
+      if(job.status!=='running') {
+        response=job.response;
+        if(job.status==='failed')throw Error(response.error);
+        break;
+      }
+      $('#call-status').textContent=job.phase==='explanation' ? 'Explaining this call…' : 'Checking recorded evidence…';
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
     if(current!==callTicket || log.id!==identity || selected!==eventId)return;
     const result=response.result;$('#call-status').textContent='';
     if(result.status!=='answered') {
@@ -393,7 +407,7 @@ async function analyzeCall() {
       recorded.append(el('summary','Recorded effects'),fields({Status:effects.outcome,'Operation started':effects.effectCalled,Result:effects.resultRecorded ? effects.result : 'Not recorded','Added facts':effects.changes?.added ?? 'Unknown','Removed facts':effects.changes?.removed ?? 'Unknown'}));output.append(recorded);
     }
     output.append(translation);
-  }catch(error) {if(current===callTicket) {$('#call-status').textContent='';output.replaceChildren(el('p',error.message,'content'));}}
+  }catch(error) {if(current===callTicket) {$('#call-status').textContent='';output.replaceChildren(el('p',error.name==='TimeoutError' ? 'Analysis request timed out. Try again.' : error.message,'content'));}}
   finally {if(current===callTicket)$('#analyze-call').disabled=!callTemplate;}
 }
 function queryResult(result,title) {

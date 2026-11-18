@@ -6,6 +6,7 @@ from pathlib import Path
 import secrets
 import threading
 import uuid
+from urllib.parse import urlsplit
 
 from policyweave.policy_adder import TranslationFailure, translate
 from .study import now
@@ -30,13 +31,24 @@ class Handler(BaseHTTPRequestHandler):
         pass  # Never log policy documents, response bodies or credentials.
 
     def local(self):
-        port = self.server.server_address[1]
+        host = self.headers.get("Host", "")
+        try:
+            address = urlsplit("http://" + host)
+            port = address.port
+            if (address.hostname not in {"127.0.0.1", "localhost"} or not port
+                    or address.username or address.password or address.path
+                    or address.query or address.fragment or any(c.isspace() for c in host)):
+                return False
+        except ValueError:
+            return False
+        # SSH forwarding can expose a different local port from the bound port.
+        # Trust the loopback authority, never arbitrary forwarded-host headers.
         allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
-        return self.headers.get("Host") in allowed and self.headers.get(
-            "Origin", f"http://127.0.0.1:{port}"
+        return host in allowed and self.headers.get(
+            "Origin", "http://" + host
         ) in {"http://" + host for host in allowed}
 
-    def reply(self, status, body, mime="application/json"):
+    def reply(self, status, body, mime="application/json", *, filename=None):
         raw = (
             json.dumps(body, ensure_ascii=False, allow_nan=False).encode()
             if mime == "application/json"
@@ -47,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
@@ -77,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/port-job" and self.server.port_jobs:
             return self.reply(200, self.server.port_jobs.status())
         if self.path == "/api/review" and hasattr(self.server.study, "submission"):
-            return self.reply(200, self.server.study.submission())
+            return self.reply(200, self.server.study.submission(), filename="review.json")
         if self.path == "/api/export":
             return self.reply(
                 200,
@@ -85,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
                     study=self.server.study.export(),
                     summary=self.server.study.summary(),
                 ),
+                filename="policy-study.json",
             )
         assets = {
             "/": ("index.html", "text/html"),

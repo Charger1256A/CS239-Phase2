@@ -262,6 +262,19 @@ def main():
                     f"{review_url}/api/review"
                 ).json()
                 assert exported == json.loads(path.read_text())
+                # Exercise the browser download, including an edit whose autosave
+                # has not yet run, rather than only reading the JSON endpoint.
+                page.get_by_role("button", name="Add a note", exact=True).click()
+                page.get_by_label("Comment", exact=True).fill("Synthetic note entered before export.")
+                with page.expect_download() as event:
+                    page.get_by_role("link", name="Export", exact=True).click()
+                download = event.value
+                assert download.suggested_filename == "review.json"
+                assert download.failure() is None
+                exported = json.loads(Path(download.path()).read_text())
+                assert exported == json.loads(path.read_text())
+                assert exported["sentences"][1]["note"] == "Synthetic note entered before export."
+                assert page.url.startswith(review_url)
                 screenshots = cache_directory() / "test-results"
                 screenshots.mkdir(exist_ok=True)
                 page.get_by_label("Policy sentence").select_option("0")

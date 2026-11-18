@@ -14,6 +14,13 @@ from urllib.request import urlopen
 
 from policyweave._paths import cache_directory
 from .install_souffle import install as install_souffle
+from .model_settings import LOCAL_PROVIDER
+
+
+CODING_PROVIDERS = {
+    "openai": ["codex"], "anthropic": ["claude"], LOCAL_PROVIDER: ["codex"],
+    "both": ["codex", "claude"], "none": [],
+}
 
 
 # Pinned official Linux x86_64 releases exercised by the coding adapters.
@@ -138,7 +145,7 @@ def prepare(provider, directory):
             raise ValueError("Souffle cannot start; install the system libraries listed in docs/setup.md.")
     link_tool(engine, directory, "souffle")
     os.environ["PATH"] = str(directory) + os.pathsep + os.environ.get("PATH", "")
-    names = {"openai": ["codex"], "anthropic": ["claude"], "both": ["codex", "claude"], "none": []}[provider]
+    names = CODING_PROVIDERS[provider]
     for name in names:
         install_coding(name, directory, cache_directory() / "coding-tools")
         print(name + " ready")
@@ -152,7 +159,7 @@ def prepare(provider, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=["openai", "anthropic", "both", "none"], default="both")
+    parser.add_argument("--provider", choices=CODING_PROVIDERS, default="both")
     args = parser.parse_args()
     try:
         prepare(args.provider, Path(sys.executable).parent)

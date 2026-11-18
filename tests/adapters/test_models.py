@@ -140,15 +140,19 @@ class ModelConformanceTests(unittest.TestCase):
         self.assertEqual(projected["properties"]["items"]["minItems"], 1)
         self.assertIn('"maxItems": 8', projected["properties"]["items"]["description"])
 
-    def test_messages_config_does_not_inherit_openai_model_or_effort(self):
+    def test_messages_defaults_and_explicit_model_and_effort_overrides(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "connection.yaml"
-            path.write_text(yaml.safe_dump(dict(anthropic=dict(apiKey="synthetic", modelId="fixture-model"))))
+            path.write_text(yaml.safe_dump(dict(anthropic=dict(apiKey="synthetic", modelId="fixture-model",
+                                                              reasoningEffort=None))))
             settings = load_connection(path)
             self.assertEqual(settings["baseUrl"], "https://api.anthropic.com/v1")
-            self.assertNotIn("reasoningEffort", settings)
+            self.assertIsNone(settings["reasoningEffort"])
+            self.assertEqual(settings["modelId"], "fixture-model")
             path.write_text(yaml.safe_dump(dict(anthropic=dict(apiKey="synthetic"))))
-            self.assertEqual(load_connection(path)["modelId"], "claude-sonnet-4-6")
+            settings = load_connection(path)
+            self.assertEqual(settings["modelId"], "claude-opus-5-5")
+            self.assertEqual(settings["reasoningEffort"], "medium")
 
     def test_both_protocols_reject_unsafe_connections_before_network(self):
         for protocol in ("messages", "chat-completions"):
@@ -167,7 +171,12 @@ def proxy_request(proxy, path, payload, headers=None):
     connection.sock.settimeout(5)
     connection.sock.connect(str(proxy.path))
     try:
-        connection.request("POST", path, json.dumps(payload), headers or {})
+        try:
+            connection.request("POST", path, json.dumps(payload), headers or {})
+        except BrokenPipeError:
+            # Rejected routes can close after headers, before the body write.
+            # Read and assert that response instead of racing the early close.
+            pass
         response = connection.getresponse()
         return response.status, response.read(), response.getheader("Content-Type")
     finally:

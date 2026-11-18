@@ -68,6 +68,8 @@ def main():
                     ).click()
                 analysis = popup.value
                 analysis.wait_for_load_state("networkidle")
+                expect(analysis.locator(".event")).to_have_count(4)
+                analysis.get_by_label("All events", exact=True).check()
                 expect(analysis.locator(".event")).to_have_count(6)
                 screenshots = cache_directory() / "test-results"
                 screenshots.mkdir(parents=True, exist_ok=True)

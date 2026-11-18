@@ -121,16 +121,27 @@ provider: auto
 openai:
   apiKey: ""
   modelId: gpt-6.1-sol
+  reasoningEffort: medium
 
 anthropic:
   apiKey: ""
-  modelId: claude-sonnet-4-6
+  modelId: claude-opus-5-5
+  reasoningEffort: medium
+
+codex-compatible-local-endpoint:
+  baseUrl: ""
+  modelId: ""
+  apiKey: ""
+  reasoningEffort: null
 ```
 
-`provider` may be `auto` (also the default when omitted), `openai` or `anthropic`.
-Auto selects the section with a nonblank key; if both keys are filled, it selects
-OpenAI. Blank or omitted sections are inactive. Explicit selection requires that
-section's key and never falls back to the other section. An empty template fails
+`provider` may be `auto` (also the default when omitted), `openai`, `anthropic`
+or `codex-compatible-local-endpoint`. Auto selects a hosted section with a
+nonblank key; if both hosted keys are filled, it selects OpenAI. The local option
+always requires explicit selection, even with a key. Blank or omitted sections
+are inactive. Explicit selection requires that
+section's key or an explicit `baseUrl` for a keyless endpoint, and never falls
+back to the other section. An empty template fails
 with an instruction to fill one key. JSON connection files and flat connection
 documents are rejected. Artifact and trajectory JSON formats are unchanged.
 
@@ -138,15 +149,17 @@ All CLI entries use the same loader and select once per invocation. Only the
 selected section is passed to the model and coding adapters; the other key is
 discarded. OpenAI selects Chat Completions for data-only calls and Codex/Responses
 for coding sessions. Anthropic selects native Messages and Claude Code. The
-corresponding CLI must be installed for coding sessions; selection does not
+local option reuses Chat Completions and Codex/Responses, with no hosted endpoint,
+model ID or reasoning-effort defaults. Both `baseUrl` and `modelId` are required.
+The corresponding CLI must be installed for coding sessions; selection does not
 change based on installed executables or retry against another provider.
 
-| Section default | OpenAI | Anthropic |
-| --- | --- | --- |
-| `baseUrl` | `https://api.openai.com/v1` | `https://api.anthropic.com/v1` |
-| `modelId` | `gpt-6.1-sol` | `claude-sonnet-4-6` |
-| `reasoningEffort` | `medium` | Model default |
-| Coding executable | `codex` | `claude` |
+| Section default | OpenAI | Anthropic | Codex-compatible local endpoint |
+| --- | --- | --- | --- |
+| `baseUrl` | `https://api.openai.com/v1` | `https://api.anthropic.com/v1` | Required |
+| `modelId` | `gpt-6.1-sol` | `claude-opus-5-5` | Required |
+| `reasoningEffort` | `medium` | `medium` | Omitted unless configured |
+| Coding executable | `codex` | `claude` | `codex` |
 
 The template pre-fills model IDs for visibility; those same defaults apply if the
 fields are omitted. Students ordinarily fill only one `apiKey`. Advanced fields
@@ -157,6 +170,62 @@ tokens and 300 seconds unless explicitly configured. A custom endpoint can reuse
 either protocol. For a keyless local connection, explicitly select its section
 with `provider` and set `baseUrl` and `modelId`.
 
+### Local model endpoints
+
+Local or self-hosted models use the same connection YAML. Select the dedicated
+option for a service compatible with Codex:
+
+```yaml
+provider: codex-compatible-local-endpoint
+codex-compatible-local-endpoint:
+  baseUrl: http://127.0.0.1:8000/v1
+  modelId: local-model
+  apiKey: ""
+  reasoningEffort: null
+  maxTokens: 12000
+  timeoutSeconds: 300
+```
+
+Replace `local-model` with the model ID served by both interfaces below. This
+option uses the existing Codex coding harness against your endpoint. It does not
+install or serve model weights. Omit `reasoningEffort` or set it to `null` when
+the service does not support the optional reasoning parameter. If authentication
+is required, `apiKey` becomes a Bearer token; otherwise leave it empty.
+
+| Workflow | Required endpoint capabilities |
+| --- | --- |
+| Inspector QA, rules-only translation and harness translation | `POST /chat/completions`, non-streaming JSON responses, system/user messages and `max_completion_tokens`. Text must be in `choices[0].message.content` with `finish_reason: stop`, and satisfy the workflow's JSON contract. |
+| Application porting | Chat Completions with `response_format: {type: json_schema, ...}` for planning, plus `POST /responses` with Codex-compatible streaming and tool calls for coding stages. |
+| Repository back-translation and alignment | `POST /responses` with Codex-compatible streaming and tool calls. |
+
+`baseUrl` is the API prefix, including `/v1` when the service uses it; do not
+include `/chat/completions` or `/responses`. The adapters append these routes.
+The relay forwards Responses requests without converting them into Chat
+Completions. A service exposing only Chat Completions cannot run the full port
+or repository-reading workflow. Coding stages still require the installed
+Codex CLI and Docker. A compatible local Messages service can instead use the
+`anthropic` section, with `/messages` for data-only calls and Claude Code's
+streaming, tool-use and `/messages/count_tokens` interfaces for coding sessions.
+Responses support means accepting the installed Codex CLI's actual tool
+definitions, tool-call results and multi-turn requests, and producing its
+expected SSE event stream. Merely exposing a route named `/responses` is not
+sufficient. The adapter pins the configured model and does not switch providers
+or translate Responses into Chat Completions when a request fails.
+
+`./install.sh --provider codex-compatible-local-endpoint` prepares Codex and the
+same execution images. The default installer already prepares both coding CLIs.
+
+The URL must use HTTPS, or HTTP on loopback (`localhost`, `127.0.0.1` or `::1`).
+Plain HTTP on a LAN address or a Docker hostname is rejected. The endpoint must
+be reachable from the PolicyWeave host; coding containers reach it through the
+host relay. Redirects are rejected. Data-only responses are limited to 1 MiB;
+`maxTokens` accepts 1–32,000 and `timeoutSeconds` accepts 1–600 for data-only calls.
+Port planning defaults to 24,000 tokens unless configured otherwise. Choose
+budgets that fit the model's context window; source bundles and generated rules
+must fit, and host validators still reject invalid or incomplete output.
+
+### Shared connection behavior
+
 Use the same `--connection /path/to/private-connection.yaml` for `port`,
 `back-translate`, review, rules-only translation, analyze and inspect. Keep the
 file outside both application checkouts and outputs; `chmod 600` restricts local
@@ -164,6 +233,51 @@ access. The student runner owns its application's model setup separately;
 PolicyWeave does not inject the translator's credentials into the application.
 Provider-neutral transports can still implement `generate(stage, prompt)`.
 No particular hosted provider is required by the core.
+
+### Connection entry points and extension boundaries
+
+Every YAML entry goes through `adapters/model_settings.load_connection`. The
+student loader delegates to it when a file is supplied. `Connection` means the
+shared data-only transport in `adapters/compatible.py`; `CodexPort` composes the
+existing isolated coding session, including Claude Code when Messages is selected.
+
+| Entry | Model adaptation |
+| --- | --- |
+| `policyweave port` | Student loader; `CodexPort.plan()` uses `Connection` for inventory/binding, then `CodingAgent` for rules/instrumentation, independent reading and alignment. |
+| `policyweave add` / `policy-add` | Same student port workflow. With no YAML, this older entry retains the `POLICY_*` environment fallback. |
+| `policyweave back-translate` | Student loader; `CodexPort` coding sessions for independent repository reading and alignment. |
+| `policyweave translate` / `policy-translate` | `Connection` only; requires an existing binding. |
+| `policyweave backtranslate` / `policy-backtranslate` | `Connection` only; reads supplied JSON implementation evidence rather than a repository. |
+| `policyweave translate-harness` | `Connection` only; `CONNECTION_FILE` may supply the YAML path. This adapts the student's test harness, independently of the coding-agent harness. |
+| `policyweave inspect` | Optional `Connection` for read-only QA; viewing itself needs no model. |
+| `policyweave analyze` / `policy-analyze` | `Connection` for `--question`; deterministic queries/replay need no model. |
+| `policyweave review`, `view-translation` / `policy-review` | Optional `Connection` for workbench model actions; repository translation controls also compose `CodexPort`. Viewing and human judgments need no model. |
+| `policyweave pipeline` | Student port workflow followed by `Connection` for trajectory QA. |
+| `policyweave enforce` / `policy-enforce`; `run-cases` / `policy-run-cases` | No framework model connection; the application owns any model calls it makes. |
+| `python -m policyweave.policy_adder.codex` | Low-level stage CLI; shared YAML loader and the same `CodexPort` planning/coding paths. |
+
+The two transports are selected from the loaded `protocol`: `chat-completions`
+uses Chat Completions directly and Codex/Responses for coding; `messages` uses
+native Messages and Claude Code. Coding requests pass through
+`adapters/model_proxy.py`, which holds credentials on the host, limits routes and
+models, and forwards streaming. The application runtime and generated student
+runner do not receive this model connection automatically.
+
+To add another endpoint using either supported protocol, configure `baseUrl`,
+`modelId` and the existing optional fields; no new adapter is necessary. A named
+profile belongs in `model_settings.PROVIDERS`, with explicit defaults and
+selection rules, plus the public template, setup guide and course instructions.
+Add deterministic loader, transport and coding/relay conformance cases under
+`tests/adapters`; credentials must stay out of commands, mounts and artifacts.
+
+A genuinely new HTTP protocol requires wire translation in `adapters`, shared
+settings/header validation and a restricted relay route. A new coding harness
+must implement the existing `CodingAgent` session boundary: executable lookup,
+mounts, environment, arguments and successful completion handling, while reusing
+the Docker, frozen-input and artifact-validation boundaries. Add its optional
+installer mapping in `install_tools.py` and `install.sh`. Keep protocol or
+provider branches out of the five domain modules. The new local profile adds no
+protocol or harness, so it needs no separate network implementation.
 
 Install the optional
 [Claude Code native CLI](https://code.claude.com/docs/en/setup) for app-port and
@@ -221,7 +335,7 @@ policyweave view-translation --back-translation /path/to/enforced-app/back-trans
 The view opens at `http://127.0.0.1:5190`; use `--port` to select another port.
 `policyweave review` remains an alias for the same view.
 
-Each application needs its own reset/replay and authoritative observation integration. The generic port adapter does not automatically supply a research runner for every repository.
+Each application needs its own reset/replay and authoritative observation integration. The generic port adapter does not automatically supply a research runner for every repository. The [demo](../demo/README.md) exercises the shared harness with synthetic LabCluster data.
 
 ## Student runner
 

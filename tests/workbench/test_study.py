@@ -329,6 +329,7 @@ class ServerTests(unittest.TestCase):
                     Request(self.base + "/api/scenario", data=b"{}", headers=headers)
                 )
             self.assertEqual(caught.exception.code, 403)
+
         request = Request(
             self.base + "/api/judgment",
             data=json.dumps(
@@ -350,3 +351,18 @@ class ServerTests(unittest.TestCase):
                 Request(self.base + "/api/study", headers={"Host": "external.invalid"})
             )
         self.assertEqual(caught.exception.code, 403)
+
+    def test_forwarded_local_port_keeps_origin_boundary_and_download_headers(self):
+        with urlopen(Request(self.base + "/api/export", headers={"Host": "localhost:55555"})) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["Content-Disposition"], 'attachment; filename="policy-study.json"')
+        for headers in (
+            {"Host": "localhost:55555", "Origin": "http://localhost:44444"},
+            {"Host": "localhost:55555", "Origin": "https://external.invalid"},
+            {"Host": "external.invalid:55555", "X-Forwarded-Host": "localhost:55555"},
+            {"Host": "localhost:65536"},
+            {"Host": "localhost:55555@external.invalid"},
+        ):
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(Request(self.base + "/api/export", headers=headers))
+            self.assertEqual(caught.exception.code, 403)

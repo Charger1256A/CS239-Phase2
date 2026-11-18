@@ -32,6 +32,7 @@ class AnalysisServer(Server):
         self.plans = {}
         self.gate_links = {}
         self.model_inputs = {}
+        self.analysis_jobs = {}
         self.data_lock = threading.Lock()
         self.query_directory = Path(query_directory) if query_directory else None
 
@@ -120,6 +121,13 @@ class AnalysisHandler(Handler):
         params = parse_qs(route.query)
         if set(params) - {"trace"} or any(len(v) != 1 for v in params.values()):
             return self.reply(400, {"error": "Invalid trajectory selection."})
+        if route.path.startswith("/api/analysis/jobs/"):
+            identifier = route.path.removeprefix("/api/analysis/jobs/")
+            with self.server.data_lock:
+                job = deepcopy(self.server.analysis_jobs.get(identifier))
+            if job is None:
+                return self.reply(404, {"error": "Unknown analysis."})
+            return self.reply(200, job)
         try:
             timeline = self.server.document(params.get("trace", [None])[0])
         except (ValueError, OSError):
@@ -290,6 +298,11 @@ class AnalysisHandler(Handler):
             self.server.model_lock.release()
 
     def analysis(self, operation, value):
+        background = operation == "explain" and value.get("background") is True
+        if "background" in value:
+            if not background or set(value) != {"trajectoryId", "eventId", "templateId", "background"}:
+                return self.reply(400, {"error": "Select an event and predefined question only."})
+            value = {key: item for key, item in value.items() if key != "background"}
         if (
             operation != "translate"
             and not self.server.capabilities()["queryAvailable"]
@@ -298,10 +311,36 @@ class AnalysisHandler(Handler):
                 409, {"error": "Read-only queries require the native engine."}
             )
         if not self.server.model_lock.acquire(blocking=False):
+            if background:
+                with self.server.data_lock:
+                    for identifier, job in self.server.analysis_jobs.items():
+                        if job["status"] == "running" and job["request"] == value:
+                            return self.reply(202, dict(jobId=identifier))
             return self.reply(409, {"error": "Another query is running."})
+        if background:
+            identifier = uuid.uuid4().hex
+            with self.server.data_lock:
+                while len(self.server.analysis_jobs) >= 20:
+                    del self.server.analysis_jobs[next(iter(self.server.analysis_jobs))]
+                self.server.analysis_jobs[identifier] = dict(
+                    status="running", phase="evidence", request=value,
+                )
+            threading.Thread(target=self.run_analysis, args=(operation, value, identifier), daemon=True).start()
+            return self.reply(202, dict(jobId=identifier))
+        return self.run_analysis(operation, value)
+
+    def run_analysis(self, operation, value, job_id=None):
         attempts = []
         usage_start = len(getattr(self.server.generate, "usage", []))
         saved = {}
+
+        def generate(stage, prompt):
+            if job_id:
+                with self.server.data_lock:
+                    self.server.analysis_jobs[job_id]["phase"] = (
+                        "explanation" if stage == "call-analysis-answer" else "queries"
+                    )
+            return self.server.generate(stage, prompt)
 
         def run():
             nonlocal saved
@@ -315,7 +354,7 @@ class AnalysisHandler(Handler):
                     timeline,
                     value["eventId"],
                     value["templateId"],
-                    self.server.generate,
+                    generate if self.server.generate is not None else None,
                     gate=gate,
                     record=attempts.append,
                 )
@@ -377,7 +416,14 @@ class AnalysisHandler(Handler):
                 status, response = 500, {"error": "Could not retain query evidence."}
             finally:
                 self.server.model_lock.release()
-        self.reply(status, response)
+        if job_id:
+            with self.server.data_lock:
+                self.server.analysis_jobs[job_id].update(
+                    status="completed" if status == 200 else "failed",
+                    response=response,
+                )
+        else:
+            self.reply(status, response)
 
 
 def main():
