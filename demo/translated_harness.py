@@ -29,16 +29,16 @@ def _policyweave_execute(side, case, sample, output_dir):
     if case not in CASES:
         raise ValueError('Unknown scenario.')
     if type(sample) is not int or sample < 1:
-        raise ValueError('--sample must be positive')
+        raise ValueError('Sample index must be positive')
     artifacts = Path(output_dir) / 'artifacts'
     artifacts.mkdir(parents=True, exist_ok=True)
     previous_path = sys.path[:]
     try:
         run_scenario, backend = start_app()
         result = run_scenario(case, backend)
-        complete = check_result(result)
+        matched = check_result(result)
         (artifacts / 'application.json').write_text(json.dumps(result, indent=2))
-        return complete
+        return matched
     finally:
         sys.path[:] = previous_path
 

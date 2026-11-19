@@ -3,7 +3,7 @@
 ## Execution monitoring
 
 The port installs observation hooks as well as enforcement. Student harnesses
-own scenarios, reset, execution and task-completion checks; they do not implement
+own scenarios, reset, execution and checks against expected outcomes; they do not implement
 trajectory schemas, event merging or serializers. Their recording context must
 surround app initialization and execution. The library exports the recorded run.
 
@@ -227,10 +227,17 @@ is a failed run, not an empty successful trajectory.
 The shared runner passes execute(side, case, sample, output_dir) an absolute
 per-episode directory. Keep intermediate app outputs there. Port-in installs
 observation hooks; the existing recorder and runner own collection and export.
-Do not add a second event serializer or change task-completion checks. The
-student result.json contains only a Boolean task_complete. After each run command,
+Do not add a second event serializer or change checks against expected outcomes. The
+shared runner writes result.json containing only a Boolean match_expected_outcome;
+the original student harness uses the same schema without the side path component:
+<output_dir>/<case>/sample-<n>/result.json. The CLI's --sample N is a repetition
+count per selected case; the execute callback's sample is one episode's index.
+This Boolean measures the expected functional task result, independently of policy
+compliance. A correct policy block can prevent the task from matching; preserve
+the original functional checker and assess compliance separately from trajectories.
+After each run command,
 the shared runner automatically scans all current result files and prints
-cumulative task-completion counts for both app sides. Framework diagnostics
+cumulative matched/total counts for both app sides. Framework diagnostics
 stay separate in run.json.
 
 Do not add/replace business tools, solvers, confirmation screens, agent roles or

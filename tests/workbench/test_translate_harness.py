@@ -53,14 +53,16 @@ class HarnessTranslationTests(unittest.TestCase):
             runs = root / "runs"
             historical = runs / "another/ported/sample-8"
             historical.mkdir(parents=True)
-            (historical / "result.json").write_text('{"task_complete": true}')
+            (historical / "result.json").write_text('{"match_expected_outcome": true}')
             command = [sys.executable, "-B", str(output), "--side", "original", "--output_dir", str(runs)]
             env = {key: value for key, value in os.environ.items()
                    if key not in {"ORIGINAL_APP_DIR", "PORTED_APP_DIR"}}
             result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout, "Until now, original app: 1/1 runs completed the task.\n"
-                             "Until now, ported app: 1/1 runs completed the task.\n")
+            self.assertEqual(result.stdout, "Until now, original app: 1/1 runs matched the expected outcome.\n"
+                             "Until now, ported app: 1/1 runs matched the expected outcome.\n")
+            self.assertEqual(json.loads((runs / "S02/original/sample-1/result.json").read_text()),
+                             dict(match_expected_outcome=True))
             # Explicit translation paths stay authoritative in another shell.
             inherited = {**env, "ORIGINAL_APP_DIR": str(ported), "PORTED_APP_DIR": str(original)}
             selected = subprocess.run([*command, "--output_dir", str(root / "inherited")],
@@ -72,6 +74,14 @@ class HarnessTranslationTests(unittest.TestCase):
                                       cwd=root, env=env, capture_output=True, text=True, timeout=10)
             self.assertEqual(paired.returncode, 1, paired.stderr)
             self.assertIn("ported app: 0/2", paired.stdout)
+            self.assertEqual(
+                {str(path.relative_to(root / "paired"))
+                 for path in (root / "paired").rglob("result.json")},
+                {f"S02/ported/sample-{sample}/result.json" for sample in (1, 2)},
+            )
+            for sample in (1, 2):
+                self.assertEqual(json.loads((root / f"paired/S02/ported/sample-{sample}/result.json").read_text()),
+                                 dict(match_expected_outcome=False))
             moved = root / "moved"
             moved.mkdir()
             for path in (original, ported, source, output):

@@ -66,7 +66,7 @@ def load_connection(path=None):
     return settings
 
 
-def check_base(base, target, policy="policy.md", *, strict=True, app_doc="app.md"):
+def check_base(base, target, policy="policy.md", *, strict=True, app_doc=None):
     base, target = Path(base).resolve(), Path(target).absolute()
     if (
         base == target.resolve()
@@ -92,7 +92,7 @@ def check_base(base, target, policy="policy.md", *, strict=True, app_doc="app.md
         raise ValueError(
             "Commit or remove local changes before translating the base application."
         )
-    required = (app_doc, policy) if strict else (policy,)
+    required = (app_doc, policy) if strict and app_doc is not None else (policy,)
     for name in required:
         path = base / name
         if (
@@ -216,7 +216,7 @@ def run(
     work=None,
     reuse=None,
     policy="policy.md",
-    app_doc="app.md",
+    app_doc=None,
     image="policy-portin:batch-v1",
     codex="codex",
     repairs=2,
@@ -375,8 +375,7 @@ def main():
     )
     parser.add_argument(
         "--app-doc",
-        default="app.md",
-        help="Debug: original application description path relative to base",
+        help="Optional application description path relative to base",
     )
     parser.add_argument("--image", default="policy-portin:batch-v1")
     parser.add_argument("--codex", default="codex")

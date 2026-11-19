@@ -109,7 +109,7 @@ class SeparatedWorkflowTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
-    def test_shared_cli_repeats_cases_and_checks_actual_completion(self):
+    def test_shared_cli_repeats_cases_and_checks_expected_outcomes(self):
         from policyweave.workbench.runner import main
         seen = []
         def execute(side, case, sample, output_dir):
@@ -122,7 +122,11 @@ class RunnerTests(unittest.TestCase):
             result = main(execute, assess, cases=["a", "b"], argv=["--side", "original", "--sample", "2", "--output_dir", output])
             self.assertEqual(result, 1)
             self.assertEqual(seen, [("original", "a", 1), ("original", "a", 2), ("original", "b", 1), ("original", "b", 2)])
-            self.assertTrue((Path(output) / "b/original/sample-2/result.json").is_file())
+            self.assertEqual(
+                {str(path.relative_to(output)) for path in Path(output).rglob("result.json")},
+                {f"{case}/original/sample-{sample}/result.json"
+                 for case in ("a", "b") for sample in (1, 2)},
+            )
             self.assertEqual(json.loads((Path(output) / "b/original/sample-2/app-output.json").read_text()),
                              dict(case="b", sample=2))
 
@@ -137,10 +141,11 @@ class RunnerTests(unittest.TestCase):
             record = run_case(execute, assess, side="original", case="c1", output=output)
             self.assertEqual(seen, [("original", "c1", 1, Path(output).resolve() / "c1/original/sample-1")])
             self.assertEqual(record["executionStatus"], "completed")
+            self.assertEqual(record["version"], 2)
             self.assertEqual(record["trajectories"], [])
-            self.assertTrue(record["taskCompleteness"])
+            self.assertTrue(record["matchExpectedOutcome"])
             directory = Path(output) / "c1/original/sample-1"
-            self.assertEqual(json.loads((directory / "result.json").read_text()), dict(task_complete=True))
+            self.assertEqual(json.loads((directory / "result.json").read_text()), dict(match_expected_outcome=True))
             self.assertEqual(json.loads((directory / "run.json").read_text()), record)
             with self.assertRaises(FileExistsError):
                 run_case(execute, assess, side="original", case="c1", output=output)
@@ -152,8 +157,10 @@ class RunnerTests(unittest.TestCase):
             record = run_case(lambda *a: True, lambda result: result,
                 side="ported", case="c1", output=output)
             self.assertEqual(record["executionStatus"], "failed")
-            self.assertTrue(record["taskCompleteness"])
+            self.assertTrue(record["matchExpectedOutcome"])
             self.assertIn("trajectory.jsonl", record["trajectories"])
+            self.assertEqual(json.loads((Path(output) / "c1/ported/sample-1/result.json").read_text()),
+                             dict(match_expected_outcome=True))
             Timeline(decode_trajectory((Path(output) / "c1/ported/sample-1/trajectory.jsonl").read_text()))
 
     def test_execution_exception_keeps_evidence_without_exception_text(self):
@@ -164,9 +171,9 @@ class RunnerTests(unittest.TestCase):
                               side="ported", case="c1", output=output)
             self.assertEqual(record["errorType"], "RuntimeError")
             self.assertNotIn("synthetic-private-value", json.dumps(record))
-            self.assertIsNone(record["taskCompleteness"])
+            self.assertIsNone(record["matchExpectedOutcome"])
             self.assertEqual(json.loads((Path(output) / "c1/ported/sample-1/result.json").read_text()),
-                             dict(task_complete=False))
+                             dict(match_expected_outcome=False))
 
     def test_summary_scans_all_current_results_and_counts_samples_individually(self):
         with tempfile.TemporaryDirectory() as output:
@@ -177,22 +184,23 @@ class RunnerTests(unittest.TestCase):
             # Historical samples outside the latest CLI selection count too.
             directory = Path(output) / "another-case/ported/sample-42"
             directory.mkdir(parents=True)
-            save(directory / "result.json", dict(task_complete=True))
+            save(directory / "result.json", dict(match_expected_outcome=True))
             # An unfinished directory and unrelated files do not add samples.
             (Path(output) / "c1/original/sample-3").mkdir()
-            save(Path(output) / "result.json", dict(task_complete=True))
+            save(Path(output) / "result.json", dict(match_expected_outcome=True))
             summary = summarize(output)
-            self.assertEqual(summary, dict(original=dict(completed=1, total=2),
-                                           ported=dict(completed=1, total=1)))
+            self.assertEqual(summary, dict(original=dict(matched=1, total=2),
+                                           ported=dict(matched=1, total=1)))
             (directory / "result.json").unlink()
-            self.assertEqual(summarize(output)["ported"], dict(completed=0, total=0))
+            self.assertEqual(summarize(output)["ported"], dict(matched=0, total=0))
 
     def test_summary_rejects_invalid_results_instead_of_counting_truthy_values(self):
         with tempfile.TemporaryDirectory() as output:
             directory = Path(output) / "c1/original/sample-1"
             directory.mkdir(parents=True)
-            for value in (dict(task_complete="true"), dict(task_complete=1),
-                          dict(task_complete=True, extra="unused"), {}):
+            for value in (dict(match_expected_outcome="true"), dict(match_expected_outcome=1),
+                          dict(match_expected_outcome=True, extra="unused"),
+                          dict(task_complete=True), {}):
                 save(directory / "result.json", value)
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     summarize(output)
@@ -208,13 +216,13 @@ class RunnerTests(unittest.TestCase):
                     main(lambda side, case, *args: case == "a", lambda result: result,
                          cases=["a", "b"], argv=["--case", case, "--side", "original", "--output_dir", output])
                 self.assertEqual(stream.getvalue(),
-                                 f"Until now, original app: {expected} runs completed the task.\n"
-                                 "Until now, ported app: 0/0 runs completed the task.\n")
+                                 f"Until now, original app: {expected} runs matched the expected outcome.\n"
+                                 "Until now, ported app: 0/0 runs matched the expected outcome.\n")
             self.assertEqual(json.loads((Path(output) / "b/original/sample-1/result.json").read_text()),
-                             dict(task_complete=False))
+                             dict(match_expected_outcome=False))
 
     @unittest.skipUnless(shutil.which("souffle") and shutil.which("prlimit"), "Native engine required")
-    def test_ported_exports_actual_gates_and_independent_completion(self):
+    def test_ported_exports_actual_gates_and_checks_only_the_expected_outcome(self):
         from policyweave.enforcement import Policy, caller_context
         from policyweave.analysis.timeline import Timeline
         from policyweave.analysis.trajectory import TrajectorySession
@@ -223,26 +231,34 @@ class RunnerTests(unittest.TestCase):
             rules = Path(output) / "rules.dl"
             rules.write_text('Allow(Q) :- Request(Q,"student","read").')
             effects = []
-            def execute(*args):
-                policy = Policy(rules)
-                @policy
+            def execute(side, *args):
                 def read(document):
                     effects.append(document)
                     return dict(ok=True)
+                if side == "ported":
+                    read = Policy(rules)(read)
                 with caller_context("student"):
                     read("one")
                 with caller_context("other"):
                     read("two")
                 return effects
-            record = run_case(execute, lambda result: result == ["one", "two"],
+            def assess(result):
+                return result == ["one", "two"]
+            original = run_case(execute, assess, side="original", case="c1", output=output)
+            self.assertTrue(original["matchExpectedOutcome"])
+            self.assertEqual(effects, ["one", "two"])
+            effects.clear()
+            record = run_case(execute, assess,
                 side="ported", case="c1", output=output)
             self.assertEqual(record["executionStatus"], "completed")
-            self.assertFalse(record["taskCompleteness"])
+            self.assertFalse(record["matchExpectedOutcome"])
             directory = Path(output) / "c1/ported/sample-1"
             Timeline(json.loads((directory / "trajectory.json").read_text()))
             verified = TrajectorySession(json.loads((directory / "gate-1.json").read_text())).verify()
             self.assertTrue(verified["allMatched"])
             self.assertEqual(effects, ["one"])
+            result = directory / "result.json"
+            self.assertEqual(json.loads(result.read_text()), dict(match_expected_outcome=False))
 
 
 class CommandTests(unittest.TestCase):

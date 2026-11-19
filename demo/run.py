@@ -35,26 +35,27 @@ def check_result(result):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", choices=CASES)
-    parser.add_argument("--side", choices=["original"], required=True)
     parser.add_argument("--output_dir", default="runs", type=Path)
-    parser.add_argument("--sample", default=1, type=int)
+    parser.add_argument("--sample", default=1, type=int, metavar="N",
+                        help="Repetitions per selected scenario; runs samples 1 through N (default: 1)")
     args = parser.parse_args()
     if args.sample < 1:
-        parser.error("--sample must be positive")
+        parser.error("--sample must be a positive repetition count")
     for case in [args.case] if args.case else CASES:
         for sample in range(1, args.sample + 1):
-            directory = args.output_dir / case / args.side / f"sample-{sample}"
+            directory = args.output_dir / case / f"sample-{sample}"
             directory.mkdir(parents=True, exist_ok=False)
-            complete = False
+            matched = False
             try:
                 run_scenario, backend = start_app()
                 result = run_scenario(case, backend)
-                complete = check_result(result)
+                matched = check_result(result)
                 artifacts = directory / "artifacts"
                 artifacts.mkdir()
                 (artifacts / "application.json").write_text(json.dumps(result, indent=2))
             finally:
-                (directory / "result.json").write_text(json.dumps({"task_complete": complete}))
+                (directory / "result.json").write_text(json.dumps({"match_expected_outcome": matched}))
+                print(f"{case}, sample-{sample}: match_expected_outcome={matched}")
 
 
 if __name__ == "__main__":

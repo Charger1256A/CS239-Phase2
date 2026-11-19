@@ -46,7 +46,7 @@ policyweave view-translation \
   --policy "$ORIGINAL_APP_DIR/policy.md"
 ```
 
-The original app is a clean Git checkout with `app.md` and `policy.md`. The target must be absent or empty. Debug flags can select existing document names without rewriting them. Git branches remain user-owned. The adapter preserves original documents, tests and business behavior; it adds rules, mediation and explicit fact producers. Passing development tests does not prove full policy fidelity or complete mediation.
+The original app is a clean Git checkout with `policy.md`. The translator discovers application documentation in the tracked source; a separate `app.md` is optional. The target must be absent or empty. Debug flags can select existing document names without rewriting them. Git branches remain user-owned. The adapter preserves original documents, tests and business behavior; it adds rules, mediation and explicit fact producers. Passing development tests does not prove full policy fidelity or complete mediation.
 
 From the repository root, `RUN_DIR="$(policyweave new-run APP)"` creates a fresh
 `runs/YYYYMonDD_HHMM_APP/` workspace, with a numeric suffix for same-minute runs.
@@ -62,7 +62,7 @@ or general network access. Use the same application dependencies when running
 the original and generated harnesses.
 
 Installation registers the `policyweave` command; no account registration is
-required. Missing `app.md` or `policy.md` fails before model calls. A nonempty
+required. Missing `policy.md` fails before model calls. A nonempty
 output fails without replacing its contents; missing output parents are created.
 The original checkout remains unchanged. The published app omits authoring policy
 documents and retains runtime prompts separately where needed.
@@ -357,14 +357,18 @@ Each application needs its own reset/replay and authoritative observation integr
 
 Students write a single Python `run.py` that starts their original app, initializes
 and drives each scenario, and checks actual effects and final responses against
-`test_cases.json`. Use an `APP_DIR` variable to locate the app. No fixed callback
+the scenarios described in `test_cases.json`; the tests may be defined directly
+in Python. Use an `APP_DIR` variable to locate the app. No fixed callback
 names or file split is required. The original harness implements `--case`,
-`--side original`, `--output_dir` and `--sample` (repetitions per case).
-Save `OUTPUT/CASE/SIDE/sample-N/result.json` containing exactly
-`{"task_complete": true}` or `{"task_complete": false}`. Keep intermediate app
-outputs in the episode's `artifacts/` directory. False also covers a timeout or
-execution error that prevents confirming completion. A gate verdict or an agent's
-claim does not establish task completion.
+`--output_dir` and `--sample` (repetitions per selected case, default 1).
+For example, `--sample 3` runs samples 1, 2 and 3 of every selected case.
+Check whether actual effects and responses match each scenario's `expected_outcome`,
+as in a unit test. `expected_outcome` describes the task's functional result,
+independent of policy compliance. A policy block can prevent a match even when
+enforcement is correct; assess compliance separately from the trajectory.
+A timeout or execution error that prevents confirming a match is false. Save
+each result to `OUTPUT/CASE/sample-N/result.json` with only the Boolean field
+`match_expected_outcome`; `N` is the sample index, from 1 through the repetition count.
 
 ### Translate the harness
 
@@ -382,9 +386,11 @@ python translated_harness.py --case S02 --side ported --output_dir runs --sample
 `--input` and `--output` are required Python filenames. The original harness stays
 unchanged and output must be new. `ORIGINAL_APP_DIR`, `PORTED_APP_DIR` and
 `CONNECTION_FILE` supply translation defaults; optional `--original-app`,
-`--ported-app` and `--connection` flags override them. The translated harness uses
-the same command-line interface (CLI) as the original harness, adding support for
-`--side ported`. Application-directory flags belong to `translate-harness`.
+`--ported-app` and `--connection` flags override them. The translated harness
+retains `--case`, `--output_dir` and `--sample`, and adds `--side` to select
+`original` or `ported`. It preserves the repetition count and result format,
+inserting the side into the result path: `OUTPUT/CASE/SIDE/sample-N/result.json`.
+Application-directory flags belong to `translate-harness`.
 
 The data-only model receives the harness, adjacent `test_cases.json` if present,
 bounded Python source from both apps (prioritizing harness imports and startup
@@ -397,18 +403,22 @@ assertions, checks syntax and appends a deterministic shared CLI. The adjacent
 checks do not prove semantic equivalence for arbitrary inline test logic; review
 the generated startup changes and run the harness. The apps are unchanged.
 
-The generated callback runs one episode and returns the student's completion
-verdict. The framework sets `APP_DIR` for the selected side before application
+The generated callback runs one episode and returns the student's expected-outcome
+verdict. Its `sample` argument is the one-based index of that episode, while the
+CLI's `--sample` specifies how many episodes to run per selected case.
+The framework sets `APP_DIR` for the selected side before application
 import/initialization. It owns repetitions, trajectory export and single-field
-results; diagnostics remain separate in `run.json`. Existing episode directories
+results: `OUTPUT/CASE/SIDE/sample-N/result.json` contains only the Boolean field
+`match_expected_outcome`. Intermediate app outputs go in the episode's
+`artifacts/` directory; diagnostics remain separate in `run.json`. Existing episode directories
 are never overwritten. `--output-dir` remains an alias for `--output_dir`.
 
 After every invocation, the generated entry point scans all current
 `OUTPUT/CASE/SIDE/sample-N/result.json` files and prints:
 
 ```text
-Until now, original app: 85/100 runs completed the task.
-Until now, ported app: 80/100 runs completed the task.
+Until now, original app: 85/100 runs matched the expected outcome.
+Until now, ported app: 80/100 runs matched the expected outcome.
 ```
 
 Each file counts one sample. Earlier results outside the latest case/sample
@@ -423,8 +433,8 @@ framework recorder and translated launcher own capture lifecycle and export:
 `trajectory.json`, equivalent `trajectory.jsonl` and native `gate-N.json` evidence.
 Students neither serialize events nor read the schema. Original runs need no
 trajectory; failed ported runs retain available evidence and an already obtained
-task verdict. Missing gate capture is a recording failure, independently of task
-completeness.
+test verdict. Missing gate capture is a recording failure, independently of
+whether the expected outcome matched.
 
 The generated launcher cannot observe a subprocess or remote server through a
 parent recording context alone. Those apps need an existing child-side capture

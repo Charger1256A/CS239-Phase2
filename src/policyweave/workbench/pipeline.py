@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--connection", required=True, type=Path)
     parser.add_argument("--policy", default="policy.md")
-    parser.add_argument("--app-doc", default="app.md")
+    parser.add_argument("--app-doc", help="Optional application description path relative to base")
     parser.add_argument("--image", default="policy-portin:batch-v1")
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--repairs", type=int, default=2)

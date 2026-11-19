@@ -248,8 +248,8 @@ never names. Runtime/transport/simulator components are not automatically agents
 Do not duplicate native tool/model logs inside opaque state payloads.
 
 The student harness owns reset, scenarios, external test inputs, app startup and
-independent task-completion checks. Its CLI delegates repetitions, lifecycle and
-export to workbench.runner.main. Port-in may instrument application runtime code;
+independent checks against expected outcomes. The translated CLI delegates
+repetitions, lifecycle and export to workbench.runner.main. Port-in may instrument application runtime code;
 it must preserve evaluation scenarios/checks. Applications with runtime code mixed
 into a harness need a clean module boundary or an injectable observer interface.
 

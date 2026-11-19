@@ -13,7 +13,6 @@ export CONNECTION_FILE="$HOME/.config/policyweave/connection.yaml"
 RUN_DIR="$(policyweave new-run Labcluster)"
 export RUN_DIR
 cp -R demo/orig_app "$RUN_DIR/orig_app"
-cp "$RUN_DIR/orig_app/requirements.md" "$RUN_DIR/orig_app/app.md"
 cp "$RUN_DIR/orig_app/policies.md" "$RUN_DIR/orig_app/policy.md"
 git -C "$RUN_DIR/orig_app" init
 git -C "$RUN_DIR/orig_app" add .

@@ -31,34 +31,38 @@ these do not establish production integration or policy fidelity.
 ## Capture
 
 The [student runner](porting.md#student-runner) uses the same scenarios and
-completion checker for original and ported applications. Original runs need no
+checks against expected outcomes for original and ported applications. Original runs need no
 trajectory. A ported run exports a conversation/tool timeline (`trajectory.jsonl` and `trajectory.json`)
-and exact gate recordings (`gate-N.json`), independently of task completion.
+and exact gate recordings (`gate-N.json`), independently of the test verdict.
 
 | Run artifact | Schema |
 | --- | --- |
-| `result.json` | Exactly `{"task_complete": true}` or `{"task_complete": false}` |
-| `run.json` | Framework diagnostics: `version: 1`, `side`, `case`, `sample`, `executionStatus` (`completed` or `failed`), nullable Boolean `taskCompleteness`, `trajectories` (relative filenames), optional `errorType` |
+| `result.json` | Exactly `{"match_expected_outcome": true}` or `{"match_expected_outcome": false}` |
+| `run.json` | Framework diagnostics: `version: 2`, `side`, `case`, `sample`, `executionStatus` (`completed` or `failed`), nullable Boolean `matchExpectedOutcome`, `trajectories` (relative filenames), optional `errorType` |
 | `trajectory.json` | `format: "policyscope-timeline"`, `version: 1`, `title`, `roles`, ordered `events`; event kinds include messages, tool calls/results, visible `llm_output` and captured state |
 | `trajectory.jsonl` | One metadata/participant header, followed by the same ordered events, one per line |
 | `gate-N.json` | `format: "policyscope-trajectory"`, `version: 1`; exact installed policy, gate inputs, decisions and outcomes, defined below |
 
 The historical `policyscope-*` wire identifiers remain unchanged for compatibility.
-Files live in `OUTPUT/CASE/SIDE/sample-N/`, which already identifies the case,
-app side and positive sample index. The student's single task verdict is true
+The translated harness writes files in `OUTPUT/CASE/SIDE/sample-N/`, which identifies the case,
+app side and positive sample index. The student's test verdict is true
 when actual effects and final responses match the expected outcome. False also
-covers an execution error or timeout that prevents confirming completion. Keep the
-same checker for both sides; a gate verdict does not establish task completion.
+covers an execution error or timeout that prevents confirming a match. Keep the
+same functional checker for both sides. Policy compliance is assessed separately
+from the trajectory; correct enforcement can block the requested task and yield
+false. The original harness writes the same result schema to
+`OUTPUT/CASE/sample-N/result.json`; translation inserts the app side into the path.
+In both CLIs, `--sample N` runs each selected case N times, numbered 1 through N.
 
 After every run command, the shared CLI scans all current result files at that
-path shape and prints completed/total samples separately for original and ported.
+path shape and prints matched/total samples separately for original and ported.
 It counts files, not scenarios or planned samples; earlier results in the same
 output directory are included. Directories without a result file do not count.
-Only the Boolean `task_complete` field is accepted. The summary contains task
-completion only.
+Only the Boolean `match_expected_outcome` field is accepted. The summary counts
+matches against expected outcomes.
 
 `run.json` holds framework diagnostics separately. Execution/capture status can
-fail while retaining a true task verdict if assessment finished before capture
+fail while retaining a true test verdict if assessment finished before capture
 failed. A missing assessment stays null in these diagnostics and yields false
 in `result.json`. Exception text is omitted; `errorType` records only its type.
 
@@ -67,7 +71,7 @@ open its timeline with `policyweave inspect --traj FILE.jsonl --connection conne
 The same command accepts `FILE.json`. Use the private connection file prepared for
 translation so trajectory review includes QA.
 
-The student harness supplies execution and actual-effect completion checks. Port-in
+The student harness supplies execution and checks against expected outcomes. Port-in
 installs observation hooks; the shared runner owns export. Native gate evidence is
 embedded with policy identity and explicit `callId`, so Inspector can resolve
 parameters, verdicts and facts without a per-app converter. `Policy.trajectory()`

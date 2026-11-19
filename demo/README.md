@@ -8,7 +8,7 @@ scripts. The scenario uses the app's explicit deterministic offline backend.
 demo/
   orig_app/                 Original application and synthetic fixtures
   ported_app/               Existing port, policy_port/, back-translation/, review.json
-  run.py                    Original harness: --side original
+  run.py                    Original-app harness
   translated_harness.py     Generated entry point: original or ported
   test_cases.json            One concrete scenario and expected outcome
   step_by_step.sh            Commands and UI checkpoints
@@ -44,9 +44,13 @@ Both harnesses load case IDs from the adjacent [test_cases.json](test_cases.json
 The demo contains one scenario with one sample per side; the full assignment
 requires ten scenarios and ten samples each.
 
-Both scripts contain the same task-completion check for `T1_priority_queue`.
+Both scripts contain the same check against the expected outcome for `T1_priority_queue`.
 The generated entry point adds APP_DIR selection, trajectory export and cumulative
-task-completion reporting. `orig_app` is a copied source tree for inspection and
+match counts. Both scripts write `result.json` with the Boolean
+`match_expected_outcome`: the original harness uses `OUTPUT/CASE/sample-N/`,
+and the translated runner adds the side: `OUTPUT/CASE/SIDE/sample-N/`.
+In both scripts, `--sample N` repeats each selected case N times, numbered 1 through N.
+`orig_app` is a copied source tree for inspection and
 execution, rather than a separate Git checkout for rerunning `policyweave port`.
 
 To run the existing offline snapshot from the repository root:
@@ -61,7 +65,7 @@ python "$RUN_DIR/translated_harness.py" --case T1_priority_queue --side ported -
 
 The ported command needs the native engine described in `../docs/setup.md`.
 Results go under `$RUN_DIR/results/T1_priority_queue/<side>/sample-1/`.
-The generated entry point prints cumulative completion counts for both sides and
+The generated entry point prints cumulative match counts for both sides and
 exports the ported trajectory as JSON and JSONL. A new workspace retains earlier
 runs and keeps each batch separate.
 
@@ -75,8 +79,8 @@ policyweave translate-harness \
   --connection "$CONNECTION_FILE"
 ```
 
-Both harnesses use the same command-line interface (CLI); the translated harness
-adds support for `--side ported`. Pass application directories to
+The translated harness retains `--case`, `--output_dir` and `--sample`, and adds
+`--side original` or `--side ported`. Pass application directories to
 `policyweave translate-harness` when generating a new entry point.
 This directory was assembled by copying existing artifacts; no application run
 was repeated while preparing it. Run outputs, credentials and development logs

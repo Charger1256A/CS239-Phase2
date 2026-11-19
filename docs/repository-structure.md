@@ -33,8 +33,8 @@ The workbench owns the HTTP server, static UI and study records. Browser code ex
 
 Its `port` and `back-translate` commands compose the existing adder, independent
 reader and alignment contracts. `workbench/runner.py` only captures and exports
-an episode as JSON/JSONL around student-owned execution and completion callbacks; it cannot
-supply app scenarios or change their criteria. Student scenario and completion code remain protected across original and ported
+an episode as JSON/JSONL around student-owned execution and checks against expected outcomes; it cannot
+supply app scenarios or change their criteria. Student scenario and checking code remain protected across original and ported
 applications. App runtime/model/tool/transport modules remain instrumentation targets.
 `workbench/translate_harness.py` adapts a single original Python harness through
 the shared model connection, preserves helper/checker definitions, and adds the
@@ -42,7 +42,7 @@ shared CLI for APP_DIR selection, recording and reporting. It does not edit or
 execute either app during translation. The execution callback receives the episode
 directory for intermediate files.
 After each run command, the runner scans all current single-field `result.json`
-files and prints cumulative task-completion counts for both app sides. Framework
+files and prints cumulative counts of matches against expected outcomes for both app sides. Framework
 execution/capture diagnostics stay separate in `run.json`.
 The isolated runtime snapshot includes the shared runner without the HTTP/UI code.
 
