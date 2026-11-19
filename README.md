@@ -2,8 +2,8 @@
 
 Read the [Phase 2 instructions](phase2-instructions.pdf) for the assignment.
 
-This repository includes the PolicyWeave source, installer and a copied
-[LabCluster demo](demo/README.md). The [walkthrough](demo/step_by_step.sh)
+This repository includes the PolicyWeave source, installer and
+[LabCluster starter materials](demo/README.md). The [walkthrough](demo/step_by_step.sh)
 shows the course steps; running that script only prints the commands.
 
 ## Demo video
@@ -23,7 +23,7 @@ On Linux x86_64, with Python 3.10+ and a running Docker daemon:
 
 The installer prepares the framework, native engine and translation tools.
 See [manual setup](docs/setup.md) if a prerequisite is missing.
-The Python core and deterministic demo need no hosted model.
+The Python core and original-app smoke test need no hosted model.
 Translation and Inspector QA use your private model connection.
 
 Copy [the connection template](examples/connection.yaml) outside this checkout,
@@ -44,8 +44,7 @@ Review **Save** writes PORTED_APP_DIR/review.json automatically.
 
 ## Included examples
 
-- [Demo](demo/README.md): copied original/ported apps, both harnesses, a scenario,
-  a matching review bundle and sample judgments.
+- [LabCluster starter](demo/README.md): original app, original harness and one scenario.
 - [Quickstart](examples/quickstart/quickstart.py): small native enforcement example.
 - [Porting and harness guide](docs/porting.md)
 - [Trajectory contract](docs/trajectory.md) and [Inspector](docs/timeline.md)

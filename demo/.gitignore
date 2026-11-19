@@ -6,3 +6,6 @@ __pycache__/
 connection.yaml
 connection.yml
 workflow/
+ported_app/
+translated_harness.py
+results/
