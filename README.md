@@ -6,6 +6,12 @@ This repository includes the PolicyWeave source, installer and a copied
 [LabCluster demo](demo/README.md). The [walkthrough](demo/step_by_step.sh)
 shows the course steps; running that script only prints the commands.
 
+## Demo video
+
+[Watch the demo recording on Zoom](https://ucla.zoom.us/rec/share/CbU3FId-x3kWsaf77L6_jqljVgwkvXEbPzmy66bFTqm9VeEFVA5U-u8KxRGvFiIg.wpcW7cNIGwhuLNzm?startTime=1795107257000).
+
+Passcode: `+c!uh4GE`
+
 ## Install PolicyWeave
 
 On Linux x86_64, with Python 3.10+ and a running Docker daemon:
