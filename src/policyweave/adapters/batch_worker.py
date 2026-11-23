@@ -44,6 +44,16 @@ def native_engine_guard(boundaries=(), project=None):
                 previous(frame, event, arg)
         return profile
 
+    def unwrapped(value):
+        """Codes of a local function or bound method and its functools.wraps chain."""
+        for _ in range(8):
+            if type(value) is types.MethodType:  # type(), not isinstance: never run a local's __class__
+                value = value.__func__
+            if type(value) is not types.FunctionType:
+                return
+            yield value.__code__
+            value = value.__dict__.get("__wrapped__")
+
     def stack(frame):
         while frame is not None:
             yield frame
@@ -69,17 +79,12 @@ def native_engine_guard(boundaries=(), project=None):
             # Policy.acall decides in a worker thread; its caller's frames are in `awaiting`.
             for frame in itertools.chain(stack(caller), awaiting.get()) if targets else ():
                 codes = [frame.f_code]
-                # @policy checks before entering its original body. Read only
-                # the trusted annotation frame's bound Python function.
+                # @policy checks before entering its original body, and a policy_port wrapper
+                # decides before running it: the original is a local (any name) of those frames.
                 annotation = frame.f_code.co_filename.endswith("/policyweave/enforcement/api.py") and frame.f_code.co_name == "checked"
                 adapter = project and Path(frame.f_code.co_filename).resolve().is_relative_to(project / "policy_port")
                 if annotation or adapter:
-                    for key in ("body", "function", "fn", "callback"):
-                        body = frame.f_locals.get(key)
-                        if isinstance(body, types.MethodType):
-                            body = body.__func__
-                        if isinstance(body, types.FunctionType):
-                            codes.append(body.__code__)
+                    codes.extend(code for value in list(frame.f_locals.values()) for code in unwrapped(value))
                 for code in codes:
                     # Inventory paths follow the source AST; Python inserts
                     # <locals> between enclosing functions at runtime.

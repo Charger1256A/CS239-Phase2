@@ -101,7 +101,9 @@ class BindingTests(unittest.TestCase):
         report["boundaryExecutions"] = {}
         self.assertIn("Checks never executed the planned observation producer: owner",check_recordings(port,report))
         report["nativeBoundaryActions"] = {"tools":{"observe_owner":1}}  # a decision for another action
-        self.assertIn("Native gate checks never exercised the candidate boundary: tools",check_recordings(port,report))
+        errors = check_recordings(port,report)
+        self.assertIn("Native gate checks never exercised the candidate boundary: tools",errors)
+        self.assertTrue(any('by action: {"observe_owner": 1}' in e and "local variable" in e and "body" not in e for e in errors),errors)
 
     def test_native_initialization_failure_is_repaired_before_rules_freeze(self):
         plan = self.validate()

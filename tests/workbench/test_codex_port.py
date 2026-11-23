@@ -230,10 +230,19 @@ with tempfile.TemporaryDirectory() as d:
               'def factory():\\n    def nested(policy): return policy.execute("reader", "read", {}, lambda _: True)\\n    return nested\\n'
               'def decorated_factory():\\n    def nested(): return True\\n    return nested\\n'
               'def produce(): return "actual observation"\\n'
+              'def renamed(): return True\\n'
+              'def wrapped(): return True\\n'
               'async def awaited(policy):\\n    async def safe(): return True\\n'
               '    return await policy.acall("reader", "read", {}, safe)\\n')
-    scope = {}
+    scope, adapter = {}, {}
     exec(compile(source, str(tool), 'exec'), scope)
+    (Path(d) / 'policy_port').mkdir()
+    exec(compile('import functools\\n'  # wrappers hold the original under any name, or only via wraps()
+                 'class Odd:\\n    __class__ = property(lambda self: 1 / 0)\\n'  # isinstance() on this local would raise
+                 'def gate(original, policy):\\n    def checked(odd=Odd()): return policy.call("reader", "read", {}, lambda: original())\\n    return checked\\n'
+                 'def gate_wraps(original, policy):\\n    @functools.wraps(original)\\n'
+                 '    def checked(): return policy.call("reader", "read", {}, lambda: checked.__wrapped__())\\n    return checked\\n',
+                 str(Path(d) / 'policy_port' / 'adapter.py'), 'exec'), adapter)
     counts = native_engine_guard([
         dict(id='plain', file='tool.py', symbol='plain'),
         dict(id='plain_twin', file='tool.py', symbol='plain'),
@@ -242,6 +251,8 @@ with tempfile.TemporaryDirectory() as d:
         dict(id='nested', file='tool.py', symbol='factory.nested'),
         dict(id='nested_decorated', file='tool.py', symbol='decorated_factory.nested'),
         dict(id='producer', file='tool.py', symbol='produce'),
+        dict(id='renamed', file='tool.py', symbol='renamed'),
+        dict(id='wrapped', file='tool.py', symbol='wrapped'),
     ], Path(d))
     try:
         with patch('policyweave.core.datalog.Souffle.evaluate', lambda *a: []):
@@ -260,8 +271,9 @@ with tempfile.TemporaryDirectory() as d:
         assert policy(name='read')(scope['decorated_factory']())()
     assert scope['factory']()(policy)
     assert scope['produce']() == 'actual observation'
+    assert adapter['gate'](scope['renamed'], policy)() and adapter['gate_wraps'](scope['wrapped'], policy)()
     assert asyncio.run(scope['awaited'](policy))
-    gated = {'plain', 'plain_twin', 'decorated', 'nested', 'nested_decorated', 'awaited'}
+    gated = {'plain', 'plain_twin', 'decorated', 'nested', 'nested_decorated', 'awaited', 'renamed', 'wrapped'}
     assert set(counts['boundaryCalls']) == gated
     assert counts['boundaryActions'] == {name: {'read': 1} for name in gated}, counts['boundaryActions']
     assert counts['boundaryExecutions']['producer'] == 1
