@@ -242,6 +242,33 @@ class BindingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "signature"):
             validate_inventory(result, self.original, self.framework, "policy.md")
 
+    def test_planning_keeps_explicit_large_budget_and_records_failed_call_diagnostics(self):
+        from policyweave.policy_adder.codex import CodexPort
+
+        for name in ("core/foundations.json", "core/contracts.py", "enforcement/api.py",
+                     "enforcement/fact_tools.py", "runtime-guide.md", "porting-contract.md"):
+            path = self.framework / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("{}")
+        save(self.root / "source.json", dict(policy="policy.md"))
+        port = CodexPort.__new__(CodexPort)
+        port.output, port.runtime = self.root, self.framework
+        port.settings = dict(baseUrl="https://model.invalid/v1", modelId="fixture", maxTokens=64000)
+        reply = dict(choices=[dict(finish_reason="length", message=dict(content="synthetic private partial"))],
+                     usage=dict(completion_tokens=64000))
+        with patch("policyweave.adapters.compatible.build_opener") as opener:
+            opener.return_value.open.return_value.__enter__.return_value.read.return_value = json.dumps(reply).encode()
+            with self.assertRaisesRegex(RuntimeError, r"maxTokens \(64000\)"):
+                port.plan("binding-plan", "plan", "binding-plan-attempt-0")
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+            self.assertEqual(payload["max_completion_tokens"], 64000)
+        diagnostic = json.loads((self.root / "binding-plan-attempt-0-error.json").read_text())
+        self.assertEqual(diagnostic["kind"], "output_limit")
+        self.assertEqual(diagnostic["completion_tokens"], 64000)
+        self.assertEqual(json.loads((self.root / "binding-plan-attempt-0-usage.json").read_text()), [])
+        self.assertFalse((self.root / "binding-plan-attempt-0-response.json").exists())
+        self.assertNotIn("synthetic private partial", json.dumps(diagnostic))
+
     def test_extra_edb_input_redeclaration_and_observed_seeds_are_rejected(self):
         plan = self.validate()
         for source in [

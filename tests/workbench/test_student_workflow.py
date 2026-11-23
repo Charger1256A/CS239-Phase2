@@ -236,9 +236,10 @@ class StudentWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires app.md"):
             check_base(self.base, self.target, app_doc="app.md")
         work = self.root / "without-description"
-        with patch.object(CodexPort, "translate", return_value=dict(passed=False)) as translate:
-            with self.assertRaisesRegex(ValueError, "Translation failed development checks"):
-                run(self.base, self.target, self.port.settings, work=work)
+        with patch.object(CodexPort, "translate", return_value=dict(
+                passed=False, error="binding-plan failed: Model response reached maxTokens (64000).")) as translate:
+            with self.assertRaisesRegex(ValueError, "Translation failed development checks.*maxTokens"):
+                run(self.base, self.target, self.port.settings, work=work, codex="true")
         translate.assert_called_once()
         self.assertIsNone(json.loads((work / "source.json").read_text())["appDoc"])
         self.assertIn("(discover in the original source)", (work / "prompt.txt").read_text())
