@@ -95,12 +95,12 @@ class BindingTests(unittest.TestCase):
         (self.root/"candidate/policy_port/rules.dl").write_text(self.rules)
         save(self.root/"workflow.json",dict(stages=dict(rules=dict(hash=fingerprint(self.rules)))))
         report = dict(policyTrajectories=[],trajectoryCoverage=dict(complete=True),
-                      nativeBoundaryCalls={"tools":1},boundaryExecutions={"owner":1})
+                      nativeBoundaryActions={"tools":{"read":1}},boundaryExecutions={"owner":1})
         errors = check_recordings(port,report)
         self.assertFalse(any("never exercised" in error or "producer" in error for error in errors),errors)
         report["boundaryExecutions"] = {}
         self.assertIn("Checks never executed the planned observation producer: owner",check_recordings(port,report))
-        report["nativeBoundaryCalls"] = {}
+        report["nativeBoundaryActions"] = {"tools":{"observe_owner":1}}  # a decision for another action
         self.assertIn("Native gate checks never exercised the candidate boundary: tools",check_recordings(port,report))
 
     def test_native_initialization_failure_is_repaired_before_rules_freeze(self):
@@ -359,11 +359,11 @@ class BindingTests(unittest.TestCase):
         (self.root / "candidate/policy_port/rules.dl").write_text(self.rules)
         save(self.root / "workflow.json", dict(stages=dict(rules=dict(hash=fingerprint(self.rules)))))
         self.assertEqual(candidate_errors(port), ["Planned boundary is not instrumented in the candidate: tools"])
-        report = dict(policyTrajectories=[], trajectoryCoverage=dict(complete=True), nativeBoundaryCalls={"tools": 2})
+        report = dict(policyTrajectories=[], trajectoryCoverage=dict(complete=True), nativeBoundaryActions={"tools": {"read": 2}})
         errors = check_recordings(port, report)
         self.assertFalse(any("never exercised" in e for e in errors), errors)
         self.assertTrue(any("complete actual policy gate evidence" in e for e in errors), errors)
-        report["nativeBoundaryCalls"] = {}
+        report["nativeBoundaryActions"] = {}
         errors = check_recordings(port, report)
         self.assertIn("Native gate checks never exercised the candidate boundary: tools", errors)
         self.assertNotIn("Native gate checks never exercised the candidate boundary: confirmation", errors)

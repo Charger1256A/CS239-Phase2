@@ -217,7 +217,8 @@ class CodexPortTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("souffle"), "Native engine required")
     def test_worker_rejects_engine_doubles_hidden_in_test_helpers(self):
         root = Path(__file__).resolve().parents[2]
-        code = """from unittest.mock import patch
+        code = """import asyncio
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 from policyweave.adapters.batch_worker import native_engine_guard
@@ -228,11 +229,15 @@ with tempfile.TemporaryDirectory() as d:
               'def decorated(): return True\\n'
               'def factory():\\n    def nested(policy): return policy.execute("reader", "read", {}, lambda _: True)\\n    return nested\\n'
               'def decorated_factory():\\n    def nested(): return True\\n    return nested\\n'
-              'def produce(): return "actual observation"\\n')
+              'def produce(): return "actual observation"\\n'
+              'async def awaited(policy):\\n    async def safe(): return True\\n'
+              '    return await policy.acall("reader", "read", {}, safe)\\n')
     scope = {}
     exec(compile(source, str(tool), 'exec'), scope)
     counts = native_engine_guard([
         dict(id='plain', file='tool.py', symbol='plain'),
+        dict(id='plain_twin', file='tool.py', symbol='plain'),
+        dict(id='awaited', file='tool.py', symbol='awaited'),
         dict(id='decorated', file='tool.py', symbol='decorated'),
         dict(id='nested', file='tool.py', symbol='factory.nested'),
         dict(id='nested_decorated', file='tool.py', symbol='decorated_factory.nested'),
@@ -255,7 +260,10 @@ with tempfile.TemporaryDirectory() as d:
         assert policy(name='read')(scope['decorated_factory']())()
     assert scope['factory']()(policy)
     assert scope['produce']() == 'actual observation'
-    assert set(counts['boundaryCalls']) == {'plain', 'decorated', 'nested', 'nested_decorated'}
+    assert asyncio.run(scope['awaited'](policy))
+    gated = {'plain', 'plain_twin', 'decorated', 'nested', 'nested_decorated', 'awaited'}
+    assert set(counts['boundaryCalls']) == gated
+    assert counts['boundaryActions'] == {name: {'read': 1} for name in gated}, counts['boundaryActions']
     assert counts['boundaryExecutions']['producer'] == 1
 assert counts['calls'] > 0
 """

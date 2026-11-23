@@ -16,27 +16,38 @@ def native_engine_guard(boundaries=(), project=None):
     This is a verification guard, not a sandbox against malicious Python tests.
     Docker remains the isolation boundary.
     """
+    import contextvars
+    import functools
+    import itertools
     import types
     import threading
     import policyweave.core.datalog as datalog
     import policyweave.core.policy as policy
+    import policyweave.enforcement.api as api
     import policyweave.enforcement.runtime as runtime
 
     original = datalog.Souffle
-    counts = {"calls": 0, "boundaryCalls": {}, "boundaryExecutions": {}}
-    targets = {(str((project / row["file"]).resolve()), row["symbol"]): row["id"] for row in boundaries} if project else {}
+    counts = {"calls": 0, "boundaryCalls": {}, "boundaryActions": {}, "boundaryExecutions": {}}
+    targets = {}  # one symbol may carry several inventory ids
+    for row in boundaries if project else ():
+        targets.setdefault((str((project / row["file"]).resolve()), row["symbol"]), []).append(row["id"])
+    awaiting = contextvars.ContextVar("frames_awaiting_acall", default=())
     previous_profile, previous_thread_profile = sys.getprofile(), threading.getprofile()
 
     def profiler(previous):
         def profile(frame, event, arg):
             if event == "call":
                 code = frame.f_code
-                name = targets.get((code.co_filename, code.co_qualname.replace(".<locals>.", ".")))
-                if name:
+                for name in targets.get((code.co_filename, code.co_qualname.replace(".<locals>.", ".")), ()):
                     counts["boundaryExecutions"][name] = counts["boundaryExecutions"].get(name, 0) + 1
             if previous:
                 previous(frame, event, arg)
         return profile
+
+    def stack(frame):
+        while frame is not None:
+            yield frame
+            frame = frame.f_back
 
     class EngineMeta(type):
         def __setattr__(cls, name, value):
@@ -54,8 +65,9 @@ def native_engine_guard(boundaries=(), project=None):
     class NativeEngine(original, metaclass=EngineMeta):
         def evaluate(self, inputs, rules):
             counts["calls"] += 1
-            frame, reached = sys._getframe(1) if targets else None, set()
-            while frame is not None:
+            caller, reached = sys._getframe(1), set()
+            # Policy.acall decides in a worker thread; its caller's frames are in `awaiting`.
+            for frame in itertools.chain(stack(caller), awaiting.get()) if targets else ():
                 codes = [frame.f_code]
                 # @policy checks before entering its original body. Read only
                 # the trusted annotation frame's bound Python function.
@@ -72,12 +84,16 @@ def native_engine_guard(boundaries=(), project=None):
                     # Inventory paths follow the source AST; Python inserts
                     # <locals> between enclosing functions at runtime.
                     symbol = code.co_qualname.replace(".<locals>.", ".")
-                    name = targets.get((str(Path(code.co_filename).resolve()), symbol))
-                    if name:
-                        reached.add(name)
-                frame = frame.f_back
+                    reached.update(targets.get((str(Path(code.co_filename).resolve()), symbol), ()))
             for name in reached:
                 counts["boundaryCalls"][name] = counts["boundaryCalls"].get(name, 0) + 1
+            # Gate decisions only: decide() from PolicyRuntime.execute, not construction self-tests, check() or what_if().
+            if reached and caller.f_code.co_filename.endswith("/policyweave/core/policy.py") \
+                    and caller.f_back.f_code.co_qualname == "PolicyRuntime.execute.<locals>.run":
+                action = caller.f_locals["intent"]["action"]
+                for name in reached:
+                    actions = counts["boundaryActions"].setdefault(name, {})
+                    actions[action] = actions.get(action, 0) + 1
             return super().evaluate(inputs, rules)
 
     class EngineModule(types.ModuleType):
@@ -89,6 +105,17 @@ def native_engine_guard(boundaries=(), project=None):
     datalog.Souffle = policy.Souffle = runtime.Souffle = NativeEngine
     datalog.__class__ = policy.__class__ = runtime.__class__ = EngineModule
     if targets:
+        acall = api.Policy.acall
+
+        @functools.wraps(acall)
+        async def attributed_acall(*args, **kwargs):
+            token = awaiting.set(tuple(stack(sys._getframe(1))))  # still linked before the first await
+            try:
+                return await acall(*args, **kwargs)
+            finally:
+                awaiting.reset(token)
+
+        api.Policy.acall = attributed_acall
         sys.setprofile(profiler(previous_profile))
         threading.setprofile(profiler(previous_thread_profile))
     return counts
@@ -148,6 +175,7 @@ def main():
             )
             report["nativeEngineCalls"] = counts["calls"]
             report["nativeBoundaryCalls"] = counts["boundaryCalls"]
+            report["nativeBoundaryActions"] = counts["boundaryActions"]
             report["boundaryExecutions"] = counts["boundaryExecutions"]
             if not counts["calls"]:
                 report["passed"] = False

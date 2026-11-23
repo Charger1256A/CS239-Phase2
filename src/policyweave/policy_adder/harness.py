@@ -331,8 +331,15 @@ def check_recordings(port, report):
     allowed_inputs = set(CORE) | {n for m in plan["mechanisms"] for n in CATALOG[m]["predicates"]}
     actions = {c["action"] for c in plan["calls"]}
     for boundary in _implemented_boundaries(plan, "gate"):
-        if not report.get("nativeBoundaryCalls", {}).get(boundary):
+        planned = sorted(c["action"] for c in plan["calls"] if c["boundary"] == boundary)
+        seen = report.get("nativeBoundaryActions", {}).get(boundary, {})
+        if not any(seen.get(action) for action in planned):
             errors.append("Native gate checks never exercised the candidate boundary: " + boundary)
+            errors.append(
+                f"{boundary} ran {report.get('boundaryExecutions', {}).get(boundary, 0)} time(s); gate decisions on its "
+                f"call path by action: {json.dumps(seen)}; needs one for: {', '.join(planned)}. Across Policy.acall, the "
+                "frame that awaits acall counts as the call path; acall inside create_task/gather does not."
+            )
     for boundary in _implemented_boundaries(plan, "producer"):
         if not report.get("boundaryExecutions", {}).get(boundary):
             errors.append("Checks never executed the planned observation producer: " + boundary)
@@ -510,7 +517,7 @@ def translate(port, repairs=2, feedback=None):
                 "or fn = imported_policy_helper(..., fn) before the original return trace.tool(..., fn, ...). "
                 "Do not replace original return statements with new helper returns or inline nested business functions. "
                 "Put argument/identity selectors and dynamic-dispatch decorators in policy_port, retaining a body/function/fn "
-                "reference to the candidate's original function in the wrapper for native stack coverage. "
+                "reference to the candidate's original function in the wrapper (also the frame awaiting Policy.acall) for native stack coverage. "
                 "Preserve tool return/error compatibility. Configure make_policy(refusal=handler) to project caller-safe "
                 "requestId/decision/reasonType/reasonCodes into the existing tool-result path; distinguish explicit_deny "
                 "from no_explicit_allow. Whitelist specific native refusal codes only for the appropriate action and "
