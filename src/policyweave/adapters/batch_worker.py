@@ -47,6 +47,8 @@ def native_engine_guard(boundaries=(), project=None):
     def unwrapped(value):
         """Codes of a local function or bound method and its functools.wraps chain."""
         for _ in range(8):
+            if type(value) is functools.partial:
+                value = value.func
             if type(value) is types.MethodType:  # type(), not isinstance: never run a local's __class__
                 value = value.__func__
             if type(value) is not types.FunctionType:
@@ -93,13 +95,15 @@ def native_engine_guard(boundaries=(), project=None):
             for name in reached:
                 counts["boundaryCalls"][name] = counts["boundaryCalls"].get(name, 0) + 1
             # Gate decisions only: decide() from PolicyRuntime.execute, not construction self-tests, check() or what_if().
-            if reached and caller.f_code.co_filename.endswith("/policyweave/core/policy.py") \
-                    and caller.f_back.f_code.co_qualname == "PolicyRuntime.execute.<locals>.run":
+            result = super().evaluate(inputs, rules)
+            if (reached and caller.f_code is policy.decide.__code__
+                    and caller.f_back is not None
+                    and caller.f_back.f_code in runtime.PolicyRuntime.execute.__code__.co_consts):
                 action = caller.f_locals["intent"]["action"]
                 for name in reached:
                     actions = counts["boundaryActions"].setdefault(name, {})
                     actions[action] = actions.get(action, 0) + 1
-            return super().evaluate(inputs, rules)
+            return result
 
     class EngineModule(types.ModuleType):
         def __setattr__(self, name, value):
