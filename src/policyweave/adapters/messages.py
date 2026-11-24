@@ -3,17 +3,20 @@
 from copy import deepcopy
 import json
 
-# Anthropic compiles output_config.format into a constrained-decoding grammar and
-# rejects the request with HTTP 400 ("The compiled grammar is too large...") once
-# that grammar crosses an internal size limit. Measured against the live Messages
-# API, a real binding-plan schema (PLAN_SHAPE, many nested arrays of objects) flips
-# from accepted to rejected somewhere between a projected (post structured_schema())
-# size of 4554 and 4675 bytes, with no single field responsible -- removing the
-# large injected boundary `enum` alone was not enough to drop below that cliff.
-# This threshold is kept well under the observed cliff so normal schema-size
-# variation (e.g. a larger inventory enlarging the injected boundary enum) does not
-# land in the gap between "worked when measured" and "still fails".
-MAX_WIRE_SCHEMA_BYTES = 3000
+
+def schema_compilation_failed(body):
+    """Recognize only known complexity rejections without exposing error text."""
+    if len(body) > 65_536:
+        return False
+    try:
+        error = json.loads(body)["error"]
+        return (error["type"] == "invalid_request_error"
+                and isinstance(error["message"], str)
+                and any(marker in error["message"].lower() for marker in (
+                    "schema is too complex for compilation", "compiled grammar is too large",
+                )))
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 def structured_schema(schema):
@@ -25,7 +28,7 @@ def structured_schema(schema):
     result = deepcopy(schema)
     bounds = {}
     for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
-                "multipleOf", "minLength", "maxLength", "maxItems", "uniqueItems", "pattern"):
+                "multipleOf", "minLength", "maxLength", "maxItems", "uniqueItems"):
         if key in result:
             bounds[key] = result.pop(key)
     if result.get("minItems", 0) not in {0, 1}:
@@ -52,28 +55,14 @@ def payload_for_messages(model, tokens, instructions, prompt, effort, response_f
     config = {}
     if effort is not None:
         config["effort"] = effort
-    schema_as_text = None
     if response_format and response_format["type"] == "json_schema":
-        projected = structured_schema(response_format["json_schema"]["schema"])
-        if len(json.dumps(projected)) <= MAX_WIRE_SCHEMA_BYTES:
-            config["format"] = dict(type="json_schema", schema=projected)
-        else:
-            # Too large to compile as a grammar; fall back to describing the schema in
-            # the prompt and letting the model free-form the JSON. The host still fully
-            # re-validates every field after the response arrives (see structured_schema()
-            # docstring) -- this only changes how the constraint is communicated, never
-            # what is accepted.
-            schema_as_text = projected
+        config["format"] = dict(type="json_schema", schema=structured_schema(
+            response_format["json_schema"]["schema"]
+        ))
     if config:
         payload["output_config"] = config
     if response_format and response_format["type"] == "json_object":
         payload["system"] += " Return exactly one JSON object."
-    if schema_as_text is not None:
-        payload["system"] += (
-            " Return exactly one JSON object that matches this JSON Schema exactly "
-            "(same keys, same nesting, no extra or missing keys, no commentary): "
-            + json.dumps(schema_as_text)
-        )
     return payload
 
 
