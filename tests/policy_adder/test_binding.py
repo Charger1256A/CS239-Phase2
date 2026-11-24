@@ -220,7 +220,11 @@ class BindingTests(unittest.TestCase):
         save(self.root / "source.json", dict(policy="policy.md"))
         previous = deepcopy(self.inventory)
         previous["boundaries"][0]["parameters"] = ["invented"]
+        previous["boundaries"] = [dict(deepcopy(previous["boundaries"][0]), id=f"boundary_{i}",
+            identity="Synthetic caller. " * 60, effect="Synthetic effect. " * 60,
+            outcome="Synthetic outcome. " * 60) for i in range(100)]
         save(self.root / "inventory-output-0.json", previous)
+        self.assertGreater((self.root / "inventory-output-0.json").stat().st_size, 250_000)
         save(self.root / "inventory-validation-0.json", dict(error="Signature mismatch"))
         port = CodexPort.__new__(CodexPort)
         port.output, port.runtime, port.settings = self.root, self.framework, {}
@@ -229,6 +233,8 @@ class BindingTests(unittest.TestCase):
             connection.return_value.usage = []
             result = port.plan("inventory", "repair", "inventory-attempt-1",
                                response_format=planning_format("inventory"))
+            self.assertEqual(connection.call_args.args[0]["maxTokens"], 128_000)
+            self.assertEqual(connection.call_args.args[0]["timeoutSeconds"], 600)
             self.assertEqual(result["boundaries"], previous["boundaries"])
             self.assertEqual(result["gaps"], ["Still missing confirmation"])
             self.assertIn("anyOf", connection.call_args.args[0]["responseFormat"]["json_schema"]["schema"]["properties"]["boundaries"])
@@ -243,6 +249,48 @@ class BindingTests(unittest.TestCase):
                           response_format=planning_format("inventory"), repair_sections=["gaps"])
         with self.assertRaisesRegex(ValueError, "signature"):
             validate_inventory(result, self.original, self.framework, "policy.md")
+
+    def test_planning_keeps_explicit_large_budget_and_records_failed_call_diagnostics(self):
+        from policyweave.policy_adder.codex import CodexPort
+
+        for name in ("core/foundations.json", "core/contracts.py", "enforcement/api.py",
+                     "enforcement/fact_tools.py", "runtime-guide.md", "porting-contract.md"):
+            path = self.framework / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("{}")
+        save(self.root / "source.json", dict(policy="policy.md"))
+        port = CodexPort.__new__(CodexPort)
+        port.output, port.runtime = self.root, self.framework
+        port.settings = dict(baseUrl="https://model.invalid/v1", modelId="fixture", maxTokens=64000)
+        reply = dict(choices=[dict(finish_reason="length", message=dict(content="synthetic private partial"))],
+                     usage=dict(completion_tokens=64000))
+        with patch("policyweave.adapters.compatible.build_opener") as opener:
+            opener.return_value.open.return_value.__enter__.return_value.read.return_value = json.dumps(reply).encode()
+            with self.assertRaisesRegex(RuntimeError, r"maxTokens \(64000\)"):
+                port.plan("binding-plan", "plan", "binding-plan-attempt-0")
+            payload = json.loads(opener.return_value.open.call_args.args[0].data)
+            self.assertEqual(payload["max_completion_tokens"], 64000)
+        diagnostic = json.loads((self.root / "binding-plan-attempt-0-error.json").read_text())
+        self.assertEqual(diagnostic["kind"], "output_limit")
+        self.assertEqual(diagnostic["completion_tokens"], 64000)
+        self.assertEqual(json.loads((self.root / "binding-plan-attempt-0-usage.json").read_text()), [])
+        self.assertFalse((self.root / "binding-plan-attempt-0-response.json").exists())
+        self.assertNotIn("synthetic private partial", json.dumps(diagnostic))
+
+    def test_large_source_backed_inventory_is_accepted_and_can_resume(self):
+        raw = deepcopy(self.inventory)
+        raw["boundaries"] = [dict(deepcopy(raw["boundaries"][0]), id=f"boundary_{i}",
+            identity="Synthetic caller. " * 60, effect="Synthetic effect. " * 60,
+            outcome="Synthetic outcome. " * 60) for i in range(100)]
+        for source in self.original.iterdir():
+            (self.root / "candidate" / source.name).write_bytes(source.read_bytes())
+        save(self.root / "source.json", dict(files=files(self.original)))
+        port = SimpleNamespace(output=self.root, plan=lambda *args, **kwargs: deepcopy(raw))
+        validator = lambda value: validate_inventory(value, self.original, self.framework, "policy.md")
+        inventory = _json_stage(port, "inventory", "discover", {}, validator, 0)
+        self.assertEqual(len(inventory["boundaries"]), 100)
+        self.assertGreater((self.root / "inventory-output-0.json").stat().st_size, 250_000)
+        self.assertEqual(_json_stage(port, "inventory", "discover", {}, validator, 0), inventory)
 
     def test_extra_edb_input_redeclaration_and_observed_seeds_are_rejected(self):
         plan = self.validate()

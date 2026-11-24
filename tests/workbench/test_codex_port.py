@@ -122,6 +122,51 @@ class CodexPortTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "snapshot exceeds"):
             copy_source(self.source, self.root / "oversized-snapshot")
 
+    def test_snapshot_keeps_tracked_templates_locks_and_extensionless_runtime_files(self):
+        included = {
+            "prompts/system.j2": b"Help {{ role }} with the task.",
+            "uv.lock": b"version = 1\n",
+            ".python-version": b"3.12\n",
+            "Dockerfile": b"FROM scratch\n",
+            "assets/fixture.bin": b"\x00\xff\x80",
+            "launch.sh": b"#!/bin/sh\nexit 0\n",
+        }
+        excluded = [".env.local", ".netrc", ".npmrc", "id_ed25519", "signing.pem",
+                    "tls.key", "config/auth.json", "config/connections.yml", "client-secret", ".ssh/config"]
+        for name, content in included.items():
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        for name in excluded:
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("synthetic private fixture")
+        (self.source / "launch.sh").chmod(0o755)
+        (self.source / "linked.j2").symlink_to(self.source / "prompts/system.j2")
+        subprocess.run(["git", "-C", str(self.source), "add", "."], check=True)
+        (self.source / "untracked.j2").write_text("must not copy")
+        destination = self.root / "complete-snapshot"
+        copy_source(self.source, destination)
+        for name, content in included.items():
+            self.assertEqual((destination / name).read_bytes(), content)
+        self.assertTrue(os.access(destination / "launch.sh", os.X_OK))
+        for name in [*excluded, "linked.j2", "untracked.j2"]:
+            self.assertFalse((destination / name).exists(), name)
+
+    def test_snapshot_does_not_follow_a_replaced_parent_directory(self):
+        prompts = self.source / "prompts"
+        prompts.mkdir()
+        (prompts / "system.j2").write_text("tracked template")
+        subprocess.run(["git", "-C", str(self.source), "add", "prompts"], check=True)
+        shutil.rmtree(prompts)
+        private = self.root / "outside"
+        private.mkdir()
+        (private / "system.j2").write_text("synthetic private fixture")
+        prompts.symlink_to(private, target_is_directory=True)
+        destination = self.root / "no-link-snapshot"
+        copy_source(self.source, destination)
+        self.assertFalse((destination / "prompts/system.j2").exists())
+
     def test_boundary_change_and_stale_review_are_rejected(self):
         app = RepositoryApplication(self.port.output)
         study = Study(self.root / "study", app)
